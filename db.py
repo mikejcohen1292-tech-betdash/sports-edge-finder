@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS games (
     sport           TEXT NOT NULL,
     home_team       TEXT NOT NULL,
     away_team       TEXT NOT NULL,
-    commence_time   TEXT NOT NULL,   -- ISO8601 UTC
+    commence_time   TEXT NOT NULL,
     season          TEXT
 );
 
@@ -21,11 +21,11 @@ CREATE TABLE IF NOT EXISTS odds_snapshots (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id         TEXT NOT NULL,
     book            TEXT NOT NULL,
-    captured_at     TEXT NOT NULL,   -- ISO8601 UTC, when we pulled it
-    market          TEXT NOT NULL,   -- 'h2h' | 'spreads' | 'totals'
-    home_price      REAL,            -- American odds, moneyline or against-spread price
+    captured_at     TEXT NOT NULL,
+    market          TEXT NOT NULL,
+    home_price      REAL,
     away_price      REAL,
-    home_point      REAL,            -- spread or total number, home side
+    home_point      REAL,
     away_point      REAL,
     FOREIGN KEY (game_id) REFERENCES games(game_id)
 );
@@ -38,15 +38,13 @@ CREATE TABLE IF NOT EXISTS results (
     FOREIGN KEY (game_id) REFERENCES games(game_id)
 );
 
--- Optional: only populated if/when you plug in a bet%/handle% source.
--- Everything else in the system works without this table having rows.
 CREATE TABLE IF NOT EXISTS public_betting (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id         TEXT NOT NULL,
     captured_at     TEXT NOT NULL,
-    side            TEXT NOT NULL,   -- 'home' | 'away'
-    bet_pct         REAL,            -- % of tickets
-    handle_pct      REAL,            -- % of money
+    side            TEXT NOT NULL,
+    bet_pct         REAL,
+    handle_pct      REAL,
     source          TEXT,
     FOREIGN KEY (game_id) REFERENCES games(game_id)
 );
@@ -55,18 +53,36 @@ CREATE TABLE IF NOT EXISTS signals (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id         TEXT NOT NULL,
     sport           TEXT NOT NULL,
-    signal_type     TEXT NOT NULL,   -- 'steam_spread' | 'steam_ml' | 'reverse_line_movement'
-    favored_side    TEXT NOT NULL,   -- 'home' | 'away'
-    strength        REAL NOT NULL,   -- 0-1 normalized
+    signal_type     TEXT NOT NULL,
+    favored_side    TEXT NOT NULL,
+    strength        REAL NOT NULL,
     open_point      REAL,
     close_point     REAL,
     computed_at     TEXT NOT NULL,
     FOREIGN KEY (game_id) REFERENCES games(game_id)
 );
 
+CREATE TABLE IF NOT EXISTS recommendations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id         TEXT NOT NULL,
+    sport           TEXT NOT NULL,
+    signal_id       INTEGER NOT NULL,
+    signal_type     TEXT NOT NULL,
+    favored_side    TEXT NOT NULL,
+    strength        REAL NOT NULL,
+    close_point     REAL,
+    recommended_at  TEXT NOT NULL,
+    graded          INTEGER NOT NULL DEFAULT 0,
+    outcome         TEXT,
+    UNIQUE(game_id, signal_type),
+    FOREIGN KEY (game_id) REFERENCES games(game_id),
+    FOREIGN KEY (signal_id) REFERENCES signals(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_odds_game ON odds_snapshots(game_id);
 CREATE INDEX IF NOT EXISTS idx_signals_game ON signals(game_id);
 CREATE INDEX IF NOT EXISTS idx_games_sport_time ON games(sport, commence_time);
+CREATE INDEX IF NOT EXISTS idx_recs_graded ON recommendations(graded);
 """
 
 
