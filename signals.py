@@ -1,24 +1,26 @@
 """
 Computes betting signals from stored odds snapshots.
 
-Two signal types, in order of how much data they need:
+Three signal types, in order of how much data they need:
 
-1. steam_spread / steam_ml
-   Sharp, fast line movement in one direction across multiple books.
-   Doesn't require bet% data — pure price-action detection. This is your
-   primary signal until/unless you add a bet%/handle% feed.
+1. steam_spread
+   Sharp, fast line movement on the point spread in one direction across
+   books. Doesn't require bet% data — pure price-action detection.
 
-2. reverse_line_movement
-   The exact pattern you described: line moves AGAINST the side getting
-   more public bets. Only computes if the public_betting table has rows
-   for a game — otherwise it's skipped, not faked.
+2. steam_total
+   Same idea, applied to the over/under total instead of the spread.
+
+3. reverse_line_movement
+   The exact pattern you originally described: line moves AGAINST the side
+   getting more public bets. Only computes if the public_betting table has
+   rows for a game — otherwise it's skipped, not faked.
 
 Run this after ingesting odds, before backtest.py or recommend.py.
 """
 
 from datetime import datetime, timezone
 
-from config import STEAM_MOVE_SPREAD_POINTS, STEAM_WINDOW_MINUTES, STEAM_MOVE_ML_CENTS
+from config import STEAM_MOVE_SPREAD_POINTS, STEAM_WINDOW_MINUTES
 from db import get_connection, init_db
 
 
@@ -30,11 +32,11 @@ def _parse(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
-def compute_line_movement_signals(game_id, conn):
-    """Looks at all spread/h2h snapshots for a game, across all books, and
-    flags steam moves: a fast, large move in one direction."""
+def compute_spread_steam(game_id, conn):
+    """Looks at all spread snapshots for a game, across books, and flags
+    steam moves: a fast, large move in one direction."""
     rows = conn.execute(
-        """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'spreads'
+        """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'spread'
            ORDER BY captured_at ASC""",
         (game_id,),
     ).fetchall()
@@ -48,20 +50,47 @@ def compute_line_movement_signals(game_id, conn):
     move = close_row["home_point"] - open_row["home_point"]
     minutes = _minutes_between(open_row["captured_at"], close_row["captured_at"])
 
-    signals_out = []
     if abs(move) >= STEAM_MOVE_SPREAD_POINTS and minutes <= STEAM_WINDOW_MINUTES:
-        # home_point moving down (more negative) = line moving TOWARD home favoring home more
-        # home_point moving up = line moving toward away
         favored_side = "home" if move < 0 else "away"
         strength = min(1.0, abs(move) / (STEAM_MOVE_SPREAD_POINTS * 3))
-        signals_out.append({
+        return [{
             "signal_type": "steam_spread",
             "favored_side": favored_side,
             "strength": round(strength, 3),
             "open_point": open_row["home_point"],
             "close_point": close_row["home_point"],
-        })
-    return signals_out
+        }]
+    return []
+
+
+def compute_totals_steam(game_id, conn):
+    """Same steam-detection logic, applied to the over/under total line."""
+    rows = conn.execute(
+        """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'total'
+           ORDER BY captured_at ASC""",
+        (game_id,),
+    ).fetchall()
+    if len(rows) < 2:
+        return []
+
+    open_row, close_row = rows[0], rows[-1]
+    if open_row["home_point"] is None or close_row["home_point"] is None:
+        return []
+
+    move = close_row["home_point"] - open_row["home_point"]
+    minutes = _minutes_between(open_row["captured_at"], close_row["captured_at"])
+
+    if abs(move) >= STEAM_MOVE_SPREAD_POINTS and minutes <= STEAM_WINDOW_MINUTES:
+        favored_side = "over" if move > 0 else "under"
+        strength = min(1.0, abs(move) / (STEAM_MOVE_SPREAD_POINTS * 3))
+        return [{
+            "signal_type": "steam_total",
+            "favored_side": favored_side,
+            "strength": round(strength, 3),
+            "open_point": open_row["home_point"],
+            "close_point": close_row["home_point"],
+        }]
+    return []
 
 
 def compute_rlm_signals(game_id, conn):
@@ -74,10 +103,10 @@ def compute_rlm_signals(game_id, conn):
         return []
 
     latest_bet = betting_rows[0]
-    public_side = latest_bet["side"]  # side with the higher bet_pct/handle_pct
+    public_side = latest_bet["side"]
 
     spread_rows = conn.execute(
-        """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'spreads'
+        """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'spread'
            ORDER BY captured_at ASC""",
         (game_id,),
     ).fetchall()
@@ -91,12 +120,12 @@ def compute_rlm_signals(game_id, conn):
     move = close_row["home_point"] - open_row["home_point"]
     line_favored_side = "home" if move < 0 else ("away" if move > 0 else None)
     if line_favored_side is None or line_favored_side == public_side:
-        return []  # no reverse movement
+        return []
 
     strength = min(1.0, abs(move) / (STEAM_MOVE_SPREAD_POINTS * 2))
     return [{
         "signal_type": "reverse_line_movement",
-        "favored_side": line_favored_side,  # RLM says fade the public, follow the line
+        "favored_side": line_favored_side,
         "strength": round(strength, 3),
         "open_point": open_row["home_point"],
         "close_point": close_row["home_point"],
@@ -116,7 +145,9 @@ def compute_all_signals(sport_key=None):
     total = 0
     for game_id in game_ids:
         sport = conn.execute("SELECT sport FROM games WHERE game_id = ?", (game_id,)).fetchone()["sport"]
-        found = compute_line_movement_signals(game_id, conn) + compute_rlm_signals(game_id, conn)
+        found = (compute_spread_steam(game_id, conn)
+                 + compute_totals_steam(game_id, conn)
+                 + compute_rlm_signals(game_id, conn))
         for sig in found:
             conn.execute(
                 """INSERT INTO signals (game_id, sport, signal_type, favored_side, strength,
