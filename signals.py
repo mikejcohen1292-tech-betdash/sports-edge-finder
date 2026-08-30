@@ -1,14 +1,17 @@
 """
 Computes betting signals from stored odds snapshots.
 
-Three signal types, in order of how much data they need:
+Signal types, in order of how much data they need:
 
-1. steam_spread
-   Sharp, fast line movement on the point spread in one direction across
-   books. Doesn't require bet% data — pure price-action detection.
+1. steam_moneyline
+   Sharp, fast shift in implied win probability from moneyline price moves.
+   This is the one working reliably right now with real data.
 
-2. steam_total
-   Same idea, applied to the over/under total instead of the spread.
+2. steam_spread / steam_total
+   Same idea for the point spread and over/under. Currently a safe no-op —
+   OddsPapi structures these markets with each specific point value as its
+   own market ID (like Asian Handicaps), which needs one more piece of
+   decoding work before these produce real signals.
 
 3. reverse_line_movement
    The exact pattern you originally described: line moves AGAINST the side
@@ -20,7 +23,7 @@ Run this after ingesting odds, before backtest.py or recommend.py.
 
 from datetime import datetime, timezone
 
-from config import STEAM_MOVE_SPREAD_POINTS, STEAM_WINDOW_MINUTES
+from config import STEAM_MOVE_SPREAD_POINTS, STEAM_WINDOW_MINUTES, STEAM_MOVE_ML_PROB
 from db import get_connection, init_db
 
 
@@ -33,8 +36,6 @@ def _parse(ts):
 
 
 def compute_spread_steam(game_id, conn):
-    """Looks at all spread snapshots for a game, across books, and flags
-    steam moves: a fast, large move in one direction."""
     rows = conn.execute(
         """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'spread'
            ORDER BY captured_at ASC""",
@@ -64,7 +65,6 @@ def compute_spread_steam(game_id, conn):
 
 
 def compute_totals_steam(game_id, conn):
-    """Same steam-detection logic, applied to the over/under total line."""
     rows = conn.execute(
         """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'total'
            ORDER BY captured_at ASC""",
@@ -89,6 +89,44 @@ def compute_totals_steam(game_id, conn):
             "strength": round(strength, 3),
             "open_point": open_row["home_point"],
             "close_point": close_row["home_point"],
+        }]
+    return []
+
+
+def compute_moneyline_steam(game_id, conn):
+    """Steam detection on moneyline prices, using implied probability shift
+    (1/decimal_price) rather than raw price, since a 1.50->1.40 move means
+    something different at different starting prices. This is the signal
+    that's actually reliable right now — spread/total markets need one more
+    piece of setup (OddsPapi structures each specific point as its own market,
+    similar to Asian Handicaps) before they're trustworthy."""
+    rows = conn.execute(
+        """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'moneyline'
+           ORDER BY captured_at ASC""",
+        (game_id,),
+    ).fetchall()
+    if len(rows) < 2:
+        return []
+
+    open_row, close_row = rows[0], rows[-1]
+    if not all([open_row["home_price"], open_row["away_price"],
+                close_row["home_price"], close_row["away_price"]]):
+        return []
+
+    open_home_prob = 1.0 / open_row["home_price"]
+    close_home_prob = 1.0 / close_row["home_price"]
+    move = close_home_prob - open_home_prob
+    minutes = _minutes_between(open_row["captured_at"], close_row["captured_at"])
+
+    if abs(move) >= STEAM_MOVE_ML_PROB and minutes <= STEAM_WINDOW_MINUTES:
+        favored_side = "home" if move > 0 else "away"
+        strength = min(1.0, abs(move) / (STEAM_MOVE_ML_PROB * 3))
+        return [{
+            "signal_type": "steam_moneyline",
+            "favored_side": favored_side,
+            "strength": round(strength, 3),
+            "open_point": round(open_home_prob, 4),
+            "close_point": round(close_home_prob, 4),
         }]
     return []
 
@@ -147,6 +185,7 @@ def compute_all_signals(sport_key=None):
         sport = conn.execute("SELECT sport FROM games WHERE game_id = ?", (game_id,)).fetchone()["sport"]
         found = (compute_spread_steam(game_id, conn)
                  + compute_totals_steam(game_id, conn)
+                 + compute_moneyline_steam(game_id, conn)
                  + compute_rlm_signals(game_id, conn))
         for sig in found:
             conn.execute(
