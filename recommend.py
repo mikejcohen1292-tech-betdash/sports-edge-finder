@@ -1,8 +1,7 @@
 """
-The morning play list. Pulls today's odds, computes signals on them, and
-ranks games against thresholds YOU validated in backtest.py — it never
-invents a threshold, it uses whatever MIN_SIGNAL_STRENGTH_TO_RECOMMEND
-(config.py) you set after seeing real backtest results.
+The morning play list. Pulls today's signals, checks them against your
+validated threshold, LOGS each qualifying game as an official recommendation
+(so it can be tracked and graded later), and prints them.
 
 This is meant to run once per morning, after ingest_odds_oddspapi.py has
 pulled today's lines and signals.py has scored them.
@@ -19,7 +18,7 @@ from config import SPORTS, MIN_SIGNAL_STRENGTH_TO_RECOMMEND
 from db import get_connection, init_db
 
 
-def get_todays_recommendations(sport_key=None, min_strength=None):
+def get_todays_qualifying_signals(sport_key=None, min_strength=None):
     min_strength = min_strength if min_strength is not None else MIN_SIGNAL_STRENGTH_TO_RECOMMEND
     conn = get_connection()
 
@@ -29,7 +28,7 @@ def get_todays_recommendations(sport_key=None, min_strength=None):
         FROM signals s
         JOIN games g ON g.game_id = s.game_id
         LEFT JOIN results r ON r.game_id = s.game_id
-        WHERE r.completed IS NULL OR r.completed = 0
+        WHERE (r.completed IS NULL OR r.completed = 0)
           AND s.strength >= ?
           AND date(g.commence_time) = ?
     """
@@ -42,6 +41,30 @@ def get_todays_recommendations(sport_key=None, min_strength=None):
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return rows
+
+
+def log_recommendations(rows):
+    """Writes each qualifying signal into the recommendations table, once per
+    game+signal_type. Safe to re-run the same morning — won't double-log."""
+    conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    logged = 0
+    for r in rows:
+        try:
+            conn.execute(
+                """INSERT INTO recommendations
+                   (game_id, sport, signal_id, signal_type, favored_side, strength,
+                    close_point, recommended_at, graded, outcome)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)""",
+                (r["game_id"], r["game_sport"], r["id"], r["signal_type"],
+                 r["favored_side"], r["strength"], r["close_point"], now),
+            )
+            logged += 1
+        except Exception:
+            pass  # already logged today (UNIQUE constraint) — that's fine
+    conn.commit()
+    conn.close()
+    return logged
 
 
 def print_recommendations(rows):
@@ -67,5 +90,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     init_db()
-    recs = get_todays_recommendations(args.sport, args.min_strength)
+    recs = get_todays_qualifying_signals(args.sport, args.min_strength)
+    n_logged = log_recommendations(recs)
     print_recommendations(recs)
+    print(f"\n({n_logged} new recommendations logged to the tracking table.)")
