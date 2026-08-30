@@ -44,4 +44,12 @@ SPORTS = {
 # ---- Storage ----
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "edge_finder.db")
 
-# ---- Signal thresholds (starting
+# ---- Signal thresholds (starting points - recalibrate once backtest.py has real data) ----
+STEAM_MOVE_SPREAD_POINTS = 1.0
+STEAM_WINDOW_MINUTES = 90
+STEAM_MOVE_ML_CENTS = 20
+STEAM_MOVE_ML_PROB = 0.05
+MIN_SIGNAL_STRENGTH_TO_RECOMMEND = 0.6
+
+# ---- Odds API request budgeting ----
+MAX_ODDSPAPI_CALLS_PER_RUN = 2
