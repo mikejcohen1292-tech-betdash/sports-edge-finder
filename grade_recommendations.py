@@ -28,6 +28,27 @@ def grade_spread_bet(favored_side, close_point, home_score, away_score):
     return "push"
 
 
+def grade_total_bet(favored_side, close_point, home_score, away_score):
+    if close_point is None:
+        return None
+    total_score = home_score + away_score
+    if favored_side == "over":
+        result = total_score - close_point
+    else:
+        result = close_point - total_score
+    if result > 0:
+        return "win"
+    elif result < 0:
+        return "loss"
+    return "push"
+
+
+def grade_bet(signal_type, favored_side, close_point, home_score, away_score):
+    if signal_type == "steam_total":
+        return grade_total_bet(favored_side, close_point, home_score, away_score)
+    return grade_spread_bet(favored_side, close_point, home_score, away_score)
+
+
 def grade_pending_recommendations():
     conn = get_connection()
     pending = conn.execute(
@@ -39,8 +60,8 @@ def grade_pending_recommendations():
 
     graded_count = 0
     for rec in pending:
-        outcome = grade_spread_bet(rec["favored_side"], rec["close_point"],
-                                    rec["home_score"], rec["away_score"])
+        outcome = grade_bet(rec["signal_type"], rec["favored_side"], rec["close_point"],
+                            rec["home_score"], rec["away_score"])
         if outcome is None:
             continue
         conn.execute(
