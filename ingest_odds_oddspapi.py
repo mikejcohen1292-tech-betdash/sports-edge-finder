@@ -26,6 +26,14 @@ from db import get_connection, init_db
 
 BASE = "https://api.oddspapi.io/v4"
 
+# Hardcoded from OddsPapi's own docs — skips a live /sports lookup call every
+# run, which matters a lot on a 250-requests/month free tier.
+SPORT_ID_MAP = {
+    "baseball": 13,
+    "basketball": 11,
+    "american-football": 14,
+}
+
 # Which tournamentName text (case-insensitive substring) identifies each league
 # in OddsPapi's fixture data. Their fixtures endpoint returns a plain tournamentName
 # string per fixture, so we match on that instead of needing a separate lookup.
@@ -43,29 +51,11 @@ def _key_param():
     return {"apiKey": ODDSPAPI_KEY}
 
 
-_SPORT_ID_CACHE = {}
-
-
 def get_sport_id(sport_slug, session):
-    """OddsPapi identifies sports by numeric sportId, not slug — look it up once.
-    Matches against both 'slug' and 'sportName' fields since docs show both in
-    different examples, so this works regardless of which one their API returns."""
-    if sport_slug in _SPORT_ID_CACHE:
-        return _SPORT_ID_CACHE[sport_slug]
-    resp = session.get(f"{BASE}/sports", params=_key_param(), timeout=15)
-    resp.raise_for_status()
-    for s in resp.json():
-        slug = (s.get("slug") or "").lower()
-        name = (s.get("sportName") or s.get("name") or "").lower().replace(" ", "-")
-        sid = s.get("sportId")
-        if slug:
-            _SPORT_ID_CACHE[slug] = sid
-        if name:
-            _SPORT_ID_CACHE[name] = sid
-    if sport_slug not in _SPORT_ID_CACHE:
-        raise RuntimeError(f"Could not find OddsPapi sportId for slug '{sport_slug}'. "
-                            f"Available: {list(_SPORT_ID_CACHE.keys())}")
-    return _SPORT_ID_CACHE[sport_slug]
+    if sport_slug in SPORT_ID_MAP:
+        return SPORT_ID_MAP[sport_slug]
+    raise RuntimeError(f"No known OddsPapi sportId for slug '{sport_slug}'. "
+                        f"Known: {list(SPORT_ID_MAP.keys())}")
 
 
 def fetch_fixtures(sport_cfg, league_key, session, days_ahead=1):
@@ -180,13 +170,14 @@ def run_daily_snapshot(sport_key):
     sport_cfg = SPORTS[sport_key]
     session = requests.Session()
     fixtures = fetch_fixtures(sport_cfg, sport_key, session)
-    calls_used = 2
+    calls_used = 1
     total_odds_rows = 0
     for fixture in fixtures:
         if calls_used >= MAX_ODDSPAPI_CALLS_PER_RUN:
             print(f"  Hit MAX_ODDSPAPI_CALLS_PER_RUN ({MAX_ODDSPAPI_CALLS_PER_RUN}), stopping early to protect quota.")
             break
         try:
+            time.sleep(1.2)
             odds_payload = fetch_odds_for_fixture(fixture["fixtureId"], session)
             calls_used += 1
             g, o = _parse_and_store_snapshot(sport_key, fixture, odds_payload)
@@ -194,7 +185,6 @@ def run_daily_snapshot(sport_key):
             total_odds_rows += len(o)
         except requests.RequestException as e:
             print(f"  fixture {fixture.get('fixtureId')}: request failed ({e})")
-        time.sleep(0.5)
     print(f"{sport_key}: {len(fixtures)} fixtures checked, {total_odds_rows} odds rows stored, {calls_used} API calls used.")
 
 
@@ -209,13 +199,14 @@ def run_historical_backfill(sport_key, max_fixtures=None):
     fixtures = fetch_fixtures(sport_cfg, sport_key, session, days_ahead=1)
     if max_fixtures:
         fixtures = fixtures[:max_fixtures]
-    calls_used = 2
+    calls_used = 1
     total_odds_rows = 0
     for fixture in fixtures:
         if calls_used >= MAX_ODDSPAPI_CALLS_PER_RUN:
             print(f"  Hit call budget, stopping early.")
             break
         try:
+            time.sleep(1.2)
             hist_payload = fetch_historical_odds_for_fixture(fixture["fixtureId"], session)
             calls_used += 1
             g, o = _parse_and_store_snapshot(sport_key, fixture, hist_payload)
@@ -223,7 +214,6 @@ def run_historical_backfill(sport_key, max_fixtures=None):
             total_odds_rows += len(o)
         except requests.RequestException as e:
             print(f"  fixture {fixture.get('fixtureId')}: request failed ({e})")
-        time.sleep(0.5)
     print(f"{sport_key} historical: {total_odds_rows} odds rows stored, {calls_used} API calls used.")
 
 
