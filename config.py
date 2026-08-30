@@ -28,29 +28,11 @@ SPORTS = {
     "nfl": {
         "espn_sport": "football",
         "espn_league": "nfl",
-          "oddspapi_sport": "american-football",
+        "oddspapi_sport": "american-football",
         "oddspapi_league": "nfl",
         "season_start_month": 9,
     },
     "ncaaf": {
         "espn_sport": "football",
         "espn_league": "college-football",
-           "oddspapi_sport": "american-football",
-        "oddspapi_league": "ncaaf",
-        "season_start_month": 8,
-    },
-}
-
-# ---- Storage ----
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "edge_finder.db")
-
-# ---- Signal thresholds (starting points — recalibrate once backtest.py has real data) ----
-STEAM_MOVE_SPREAD_POINTS = 1.0     # spread move >= this within STEAM_WINDOW_MINUTES = steam
-STEAM_WINDOW_MINUTES = 90
-STEAM_MOVE_ML_CENTS = 20           # moneyline move >= this (American odds) within window
-MIN_SIGNAL_STRENGTH_TO_RECOMMEND = 0.6  # 0-1 scale, tune after backtest results come in
-
-# ---- Odds API request budgeting ----
-# OddsPapi free tier is capped around 250 req/month. Spend it deliberately:
-# one snapshot pull per sport per day by default, not continuous polling.
-MAX_ODDSPAPI_CALLS_PER_RUN = 2
+        "oddspapi_sport": "american-football",
