@@ -47,16 +47,24 @@ _SPORT_ID_CACHE = {}
 
 
 def get_sport_id(sport_slug, session):
-    """OddsPapi identifies sports by numeric sportId, not slug — look it up once."""
+    """OddsPapi identifies sports by numeric sportId, not slug — look it up once.
+    Matches against both 'slug' and 'sportName' fields since docs show both in
+    different examples, so this works regardless of which one their API returns."""
     if sport_slug in _SPORT_ID_CACHE:
         return _SPORT_ID_CACHE[sport_slug]
     resp = session.get(f"{BASE}/sports", params=_key_param(), timeout=15)
     resp.raise_for_status()
     for s in resp.json():
-        _SPORT_ID_CACHE[s.get("slug")] = s.get("sportId")
+        slug = (s.get("slug") or "").lower()
+        name = (s.get("sportName") or s.get("name") or "").lower().replace(" ", "-")
+        sid = s.get("sportId")
+        if slug:
+            _SPORT_ID_CACHE[slug] = sid
+        if name:
+            _SPORT_ID_CACHE[name] = sid
     if sport_slug not in _SPORT_ID_CACHE:
         raise RuntimeError(f"Could not find OddsPapi sportId for slug '{sport_slug}'. "
-                            f"Available slugs: {list(_SPORT_ID_CACHE.keys())}")
+                            f"Available: {list(_SPORT_ID_CACHE.keys())}")
     return _SPORT_ID_CACHE[sport_slug]
 
 
@@ -68,7 +76,7 @@ def fetch_fixtures(sport_cfg, league_key, session, days_ahead=1):
 
     resp = session.get(
         f"{BASE}/fixtures",
-        params={**_key_param(), "sportId": sport_id, "dateFrom": date_from, "dateTo": date_to},
+        params={**_key_param(), "sportId": sport_id, "from": date_from, "to": date_to},
         timeout=15,
     )
     resp.raise_for_status()
@@ -136,9 +144,6 @@ def _parse_and_store_snapshot(sport_key, fixture, odds_payload):
             outcome_list = list(outcomes.items())
             if len(outcome_list) < 2:
                 continue
-            # Treat first outcome as "home"/side A, second as "away"/side B —
-            # a simplification until we confirm OddsPapi's exact outcome-id
-            # convention per sport. Good enough for detecting movement.
             def _price(o):
                 players = o[1].get("players", {})
                 p0 = players.get("0", {})
@@ -175,7 +180,7 @@ def run_daily_snapshot(sport_key):
     sport_cfg = SPORTS[sport_key]
     session = requests.Session()
     fixtures = fetch_fixtures(sport_cfg, sport_key, session)
-    calls_used = 2  # sports lookup + fixtures call
+    calls_used = 2
     total_odds_rows = 0
     for fixture in fixtures:
         if calls_used >= MAX_ODDSPAPI_CALLS_PER_RUN:
