@@ -18,6 +18,12 @@ from db import get_connection, init_db
 STANDARD_JUICE = -110
 
 
+def decimal_to_american(decimal_odds):
+    if decimal_odds >= 2.0:
+        return (decimal_odds - 1) * 100
+    return -100 / (decimal_odds - 1)
+
+
 def american_to_profit(stake, odds):
     if odds > 0:
         return stake * (odds / 100.0)
@@ -40,7 +46,6 @@ def wilson_interval(wins, n, z=1.96):
 
 
 def grade_spread_bet(favored_side, close_point, home_score, away_score):
-    """Grades an ATS bet on favored_side at the closing home_point spread."""
     margin = home_score - away_score
     if favored_side == "home":
         result = margin + close_point
@@ -54,7 +59,6 @@ def grade_spread_bet(favored_side, close_point, home_score, away_score):
 
 
 def grade_total_bet(favored_side, close_point, home_score, away_score):
-    """Grades an over/under bet at the closing total line."""
     total_score = home_score + away_score
     if favored_side == "over":
         result = total_score - close_point
@@ -67,9 +71,19 @@ def grade_total_bet(favored_side, close_point, home_score, away_score):
     return "push"
 
 
+def grade_moneyline_bet(favored_side, home_score, away_score):
+    """Straight win/loss on who actually won — no point/margin needed."""
+    if home_score == away_score:
+        return "push"
+    winner = "home" if home_score > away_score else "away"
+    return "win" if winner == favored_side else "loss"
+
+
 def grade_bet(signal_type, favored_side, close_point, home_score, away_score):
     if signal_type == "steam_total":
         return grade_total_bet(favored_side, close_point, home_score, away_score)
+    if signal_type == "steam_moneyline":
+        return grade_moneyline_bet(favored_side, home_score, away_score)
     return grade_spread_bet(favored_side, close_point, home_score, away_score)
 
 
@@ -92,7 +106,7 @@ def run_backtest(sport_key=None, min_strength=0.0):
 
     buckets = {}
     for r in rows:
-        if r["signal_type"] not in ("steam_spread", "steam_total", "reverse_line_movement"):
+        if r["signal_type"] not in ("steam_spread", "steam_total", "steam_moneyline", "reverse_line_movement"):
             continue
         if r["close_point"] is None:
             continue
