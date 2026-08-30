@@ -15,8 +15,6 @@ import math
 
 from db import get_connection, init_db
 
-# Assume standard -110 vig unless we've stored the actual price (phase 2 refinement:
-# pull actual closing price per signal instead of assuming -110).
 STANDARD_JUICE = -110
 
 
@@ -43,16 +41,36 @@ def wilson_interval(wins, n, z=1.96):
 
 def grade_spread_bet(favored_side, close_point, home_score, away_score):
     """Grades an ATS bet on favored_side at the closing home_point spread."""
-    margin = home_score - away_score  # positive = home won by this much
+    margin = home_score - away_score
     if favored_side == "home":
-        result = margin + close_point  # home covers if this > 0
+        result = margin + close_point
     else:
-        result = -margin - close_point  # away covers if this > 0 (close_point already home-relative)
+        result = -margin - close_point
     if result > 0:
         return "win"
     elif result < 0:
         return "loss"
     return "push"
+
+
+def grade_total_bet(favored_side, close_point, home_score, away_score):
+    """Grades an over/under bet at the closing total line."""
+    total_score = home_score + away_score
+    if favored_side == "over":
+        result = total_score - close_point
+    else:
+        result = close_point - total_score
+    if result > 0:
+        return "win"
+    elif result < 0:
+        return "loss"
+    return "push"
+
+
+def grade_bet(signal_type, favored_side, close_point, home_score, away_score):
+    if signal_type == "steam_total":
+        return grade_total_bet(favored_side, close_point, home_score, away_score)
+    return grade_spread_bet(favored_side, close_point, home_score, away_score)
 
 
 def run_backtest(sport_key=None, min_strength=0.0):
@@ -72,10 +90,9 @@ def run_backtest(sport_key=None, min_strength=0.0):
     rows = conn.execute(query, params).fetchall()
     conn.close()
 
-    # group by (sport, signal_type)
     buckets = {}
     for r in rows:
-        if r["signal_type"] not in ("steam_spread", "reverse_line_movement"):
+        if r["signal_type"] not in ("steam_spread", "steam_total", "reverse_line_movement"):
             continue
         if r["close_point"] is None:
             continue
@@ -87,7 +104,7 @@ def run_backtest(sport_key=None, min_strength=0.0):
         wins = losses = pushes = 0
         total_profit = 0.0
         for g in games:
-            outcome = grade_spread_bet(g["favored_side"], g["close_point"], g["home_score"], g["away_score"])
+            outcome = grade_bet(g["signal_type"], g["favored_side"], g["close_point"], g["home_score"], g["away_score"])
             if outcome == "win":
                 wins += 1
                 total_profit += american_to_profit(100, STANDARD_JUICE)
