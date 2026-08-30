@@ -17,39 +17,77 @@ Set your key first:
 
 import argparse
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
 from config import SPORTS, ODDSPAPI_KEY, MAX_ODDSPAPI_CALLS_PER_RUN
 from db import get_connection, init_db
 
-BASE = "https://oddspapi.io/v4"
+BASE = "https://api.oddspapi.io/v4"
+
+# Which tournamentName text (case-insensitive substring) identifies each league
+# in OddsPapi's fixture data. Their fixtures endpoint returns a plain tournamentName
+# string per fixture, so we match on that instead of needing a separate lookup.
+LEAGUE_NAME_MATCH = {
+    "mlb": ["mlb", "major league baseball"],
+    "wnba": ["wnba"],
+    "nfl": ["nfl"],
+    "ncaaf": ["ncaa", "college football", "ncaaf"],
+}
 
 
-def _headers():
+def _key_param():
     if not ODDSPAPI_KEY:
         raise SystemExit("Set ODDSPAPI_KEY as an environment variable first. Get a free key at oddspapi.io")
-    return {"Authorization": f"Bearer {ODDSPAPI_KEY}"}
+    return {"apiKey": ODDSPAPI_KEY}
 
 
-def fetch_fixtures(sport_cfg, session):
-    """Today's/upcoming fixtures for a sport+league."""
+_SPORT_ID_CACHE = {}
+
+
+def get_sport_id(sport_slug, session):
+    """OddsPapi identifies sports by numeric sportId, not slug — look it up once."""
+    if sport_slug in _SPORT_ID_CACHE:
+        return _SPORT_ID_CACHE[sport_slug]
+    resp = session.get(f"{BASE}/sports", params=_key_param(), timeout=15)
+    resp.raise_for_status()
+    for s in resp.json():
+        _SPORT_ID_CACHE[s.get("slug")] = s.get("sportId")
+    if sport_slug not in _SPORT_ID_CACHE:
+        raise RuntimeError(f"Could not find OddsPapi sportId for slug '{sport_slug}'. "
+                            f"Available slugs: {list(_SPORT_ID_CACHE.keys())}")
+    return _SPORT_ID_CACHE[sport_slug]
+
+
+def fetch_fixtures(sport_cfg, league_key, session, days_ahead=1):
+    """Fixtures for a sport, filtered client-side to the target league by tournamentName."""
+    sport_id = get_sport_id(sport_cfg["oddspapi_sport"], session)
+    date_from = datetime.now(timezone.utc).date().isoformat()
+    date_to = (datetime.now(timezone.utc).date() + timedelta(days=days_ahead)).isoformat()
+
     resp = session.get(
         f"{BASE}/fixtures",
-        params={"sport": sport_cfg["oddspapi_sport"], "league": sport_cfg["oddspapi_league"]},
-        headers=_headers(),
+        params={**_key_param(), "sportId": sport_id, "dateFrom": date_from, "dateTo": date_to},
         timeout=15,
     )
     resp.raise_for_status()
-    return resp.json().get("fixtures", [])
+    all_fixtures = resp.json()
+    if isinstance(all_fixtures, dict):
+        all_fixtures = all_fixtures.get("fixtures", [])
+
+    needles = LEAGUE_NAME_MATCH.get(league_key, [league_key])
+    matched = [
+        f for f in all_fixtures
+        if any(n in (f.get("tournamentName") or "").lower() for n in needles)
+    ]
+    return matched
 
 
 def fetch_odds_for_fixture(fixture_id, session):
     resp = session.get(
         f"{BASE}/odds",
-        params={"fixtureId": fixture_id, "markets": "h2h,spreads"},
-        headers=_headers(),
+        params={**_key_param(), "fixtureId": fixture_id},
         timeout=15,
     )
     resp.raise_for_status()
@@ -59,8 +97,7 @@ def fetch_odds_for_fixture(fixture_id, session):
 def fetch_historical_odds_for_fixture(fixture_id, session):
     resp = session.get(
         f"{BASE}/historical-odds",
-        params={"fixtureId": fixture_id},
-        headers=_headers(),
+        params={**_key_param(), "fixtureId": fixture_id},
         timeout=15,
     )
     resp.raise_for_status()
@@ -70,9 +107,16 @@ def fetch_historical_odds_for_fixture(fixture_id, session):
 def _parse_and_store_snapshot(sport_key, fixture, odds_payload):
     """
     Normalizes OddsPapi's response into our odds_snapshots rows.
-    NOTE: exact response shape can shift as the provider evolves their API —
-    check response JSON against this parser if OddsPapi changes their schema,
-    and adjust the key lookups below accordingly.
+
+    OddsPapi nests odds under bookmakerOdds -> {book} -> markets -> {numeric
+    market id} -> outcomes -> {numeric outcome id} -> players -> "0" -> price.
+    Market/outcome IDs are numeric codes, not friendly names, and can differ
+    by sport. Rather than hardcode a fragile ID map that might be wrong for
+    a given sport, we store every priced outcome we find with its raw IDs —
+    signals.py only needs SOME consistent point/price series per game to spot
+    movement, and this keeps the pipeline running even where our ID guesses
+    are off. If a market's price moves between snapshots, that's enough to
+    build the steam-move signal on.
     """
     game_id = f"{sport_key}_{fixture['fixtureId']}"
     captured_at = datetime.now(timezone.utc).isoformat()
@@ -84,18 +128,27 @@ def _parse_and_store_snapshot(sport_key, fixture, odds_payload):
     )]
 
     rows_odds = []
-    for book_name, book_data in odds_payload.get("bookmakers", {}).items():
-        for market_name, market in book_data.get("markets", {}).items():
-            if market_name not in ("h2h", "spreads"):
-                continue
+    bookmaker_odds = odds_payload.get("bookmakerOdds", {})
+    for book_name, book_data in bookmaker_odds.items():
+        markets = book_data.get("markets", {})
+        for market_id, market in markets.items():
             outcomes = market.get("outcomes", {})
-            home_price = outcomes.get("home", {}).get("price")
-            away_price = outcomes.get("away", {}).get("price")
-            home_point = outcomes.get("home", {}).get("point")
-            away_point = outcomes.get("away", {}).get("point")
+            outcome_list = list(outcomes.items())
+            if len(outcome_list) < 2:
+                continue
+            # Treat first outcome as "home"/side A, second as "away"/side B —
+            # a simplification until we confirm OddsPapi's exact outcome-id
+            # convention per sport. Good enough for detecting movement.
+            def _price(o):
+                players = o[1].get("players", {})
+                p0 = players.get("0", {})
+                return p0.get("price"), p0.get("line") or p0.get("point")
+
+            (a_price, a_point) = _price(outcome_list[0])
+            (b_price, b_point) = _price(outcome_list[1])
             rows_odds.append((
-                game_id, book_name, captured_at, market_name,
-                home_price, away_price, home_point, away_point,
+                game_id, book_name, captured_at, f"market_{market_id}",
+                a_price, b_price, a_point, b_point,
             ))
     return rows_games, rows_odds
 
@@ -121,8 +174,8 @@ def store(rows_games, rows_odds):
 def run_daily_snapshot(sport_key):
     sport_cfg = SPORTS[sport_key]
     session = requests.Session()
-    fixtures = fetch_fixtures(sport_cfg, session)
-    calls_used = 1
+    fixtures = fetch_fixtures(sport_cfg, sport_key, session)
+    calls_used = 2  # sports lookup + fixtures call
     total_odds_rows = 0
     for fixture in fixtures:
         if calls_used >= MAX_ODDSPAPI_CALLS_PER_RUN:
@@ -148,10 +201,10 @@ def run_historical_backfill(sport_key, max_fixtures=None):
     """
     sport_cfg = SPORTS[sport_key]
     session = requests.Session()
-    fixtures = fetch_fixtures(sport_cfg, session)
+    fixtures = fetch_fixtures(sport_cfg, sport_key, session, days_ahead=1)
     if max_fixtures:
         fixtures = fixtures[:max_fixtures]
-    calls_used = 1
+    calls_used = 2
     total_odds_rows = 0
     for fixture in fixtures:
         if calls_used >= MAX_ODDSPAPI_CALLS_PER_RUN:
