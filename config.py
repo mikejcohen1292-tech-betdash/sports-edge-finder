@@ -28,14 +28,14 @@ SPORTS = {
     "nfl": {
         "espn_sport": "football",
         "espn_league": "nfl",
-        "oddspapi_sport": "football",
+          "oddspapi_sport": "american-football",
         "oddspapi_league": "nfl",
         "season_start_month": 9,
     },
     "ncaaf": {
         "espn_sport": "football",
         "espn_league": "college-football",
-        "oddspapi_sport": "football",
+           "oddspapi_sport": "american-football",
         "oddspapi_league": "ncaaf",
         "season_start_month": 8,
     },
