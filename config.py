@@ -53,4 +53,4 @@ MIN_SIGNAL_STRENGTH_TO_RECOMMEND = 0.6  # 0-1 scale, tune after backtest results
 # ---- Odds API request budgeting ----
 # OddsPapi free tier is capped around 250 req/month. Spend it deliberately:
 # one snapshot pull per sport per day by default, not continuous polling.
-MAX_ODDSPAPI_CALLS_PER_RUN = 40
+MAX_ODDSPAPI_CALLS_PER_RUN = 2
