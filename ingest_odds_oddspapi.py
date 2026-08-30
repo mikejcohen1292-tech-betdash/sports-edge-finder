@@ -199,4 +199,54 @@ def run_daily_snapshot(sport_key):
             calls_used += 1
             g, o = _parse_and_store_snapshot(sport_key, fixture, odds_payload)
             store(g, o)
-            total_odds_rows
+            total_odds_rows += len(o)
+        except requests.RequestException as e:
+            print(f"  fixture {fixture.get('fixtureId')}: request failed ({e})")
+    print(f"{sport_key}: {len(fixtures)} fixtures checked, {total_odds_rows} odds rows stored, {calls_used} API calls used.")
+
+
+def run_historical_backfill(sport_key, max_fixtures=None):
+    """
+    Pulls whatever free historical odds OddsPapi has archived. Coverage depends
+    on when their archive started, not on your season needs — check what comes
+    back before assuming it's complete.
+    """
+    sport_cfg = SPORTS[sport_key]
+    session = requests.Session()
+    fixtures = fetch_fixtures(sport_cfg, sport_key, session, days_ahead=1)
+    if max_fixtures:
+        fixtures = fixtures[:max_fixtures]
+    calls_used = 1
+    total_odds_rows = 0
+    for fixture in fixtures:
+        if calls_used >= MAX_ODDSPAPI_CALLS_PER_RUN:
+            print(f"  Hit call budget, stopping early.")
+            break
+        try:
+            time.sleep(1.2)
+            hist_payload = fetch_historical_odds_for_fixture(fixture["fixtureId"], session)
+            calls_used += 1
+            g, o = _parse_and_store_snapshot(sport_key, fixture, hist_payload)
+            store(g, o)
+            total_odds_rows += len(o)
+        except requests.RequestException as e:
+            print(f"  fixture {fixture.get('fixtureId')}: request failed ({e})")
+    print(f"{sport_key} historical: {total_odds_rows} odds rows stored, {calls_used} API calls used.")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sport", required=True, choices=SPORTS.keys())
+    parser.add_argument("--backfill-days", type=int, default=0,
+                         help="attempt to pull free historical odds instead of a live snapshot")
+    args = parser.parse_args()
+
+    init_db()
+    if args.backfill_days:
+        run_historical_backfill(args.sport)
+    else:
+        run_daily_snapshot(args.sport)
+
+
+if __name__ == "__main__":
+    main()
