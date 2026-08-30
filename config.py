@@ -16,7 +16,7 @@ SPORTS = {
         "espn_league": "mlb",
         "oddspapi_sport": "baseball",
         "oddspapi_league": "mlb",
-        "season_start_month": 3,  # rough backfill anchor
+        "season_start_month": 3,
     },
     "wnba": {
         "espn_sport": "basketball",
@@ -36,3 +36,12 @@ SPORTS = {
         "espn_sport": "football",
         "espn_league": "college-football",
         "oddspapi_sport": "american-football",
+        "oddspapi_league": "ncaaf",
+        "season_start_month": 8,
+    },
+}
+
+# ---- Storage ----
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "edge_finder.db")
+
+# ---- Signal thresholds (starting
