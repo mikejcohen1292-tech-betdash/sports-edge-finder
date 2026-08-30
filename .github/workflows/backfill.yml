@@ -1,0 +1,46 @@
+name: One-Time Season Backfill
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Backfill MLB (this season + last season)
+        run: |
+          python ingest_results_espn.py --sport mlb --start 2025-03-15 --end 2025-11-05
+          python ingest_results_espn.py --sport mlb --start 2026-03-15
+      - name: Backfill WNBA (this season + last season)
+        run: |
+          python ingest_results_espn.py --sport wnba --start 2025-05-01 --end 2025-10-20
+          python ingest_results_espn.py --sport wnba --start 2026-05-01
+      - name: Pull whatever free historical odds are available
+        env:
+          ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
+        run: |
+          python ingest_odds_oddspapi.py --sport mlb --backfill-days 1
+          python ingest_odds_oddspapi.py --sport wnba --backfill-days 1
+      - name: Compute signals
+        run: python signals.py
+      - name: Build dashboard
+        run: |
+          python dashboard.py
+          mkdir -p docs
+          cp data/dashboard.html docs/index.html
+      - name: Save to repo
+        run: |
+          git config user.name "sports-edge-bot"
+          git config user.email "actions@github.com"
+          git add data docs
+          git commit -m "Historical backfill" || echo "Nothing new to commit"
+          git push
