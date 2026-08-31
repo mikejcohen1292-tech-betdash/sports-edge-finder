@@ -2,8 +2,8 @@ name: Daily Sports Data Pipeline
 
 on:
   schedule:
-    - cron: '0 13 * * *'   # 9:00 AM US Eastern, every day
-  workflow_dispatch: {}     # adds a manual "Run workflow" button too
+    - cron: '0 13 * * *'
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -27,6 +27,9 @@ jobs:
           python ingest_results_espn.py --sport wnba --today
           python ingest_results_espn.py --sport nfl --today
           python ingest_results_espn.py --sport ncaaf --today
+
+      - name: Pull yesterday's MLB bullpen usage (official MLB Stats API, free)
+        run: python ingest_bullpen_usage.py
 
       - name: Pull today's odds
         env:
