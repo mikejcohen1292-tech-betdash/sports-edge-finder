@@ -41,16 +41,26 @@ def fetch_schedule(date_str):
     )
     resp.raise_for_status()
     data = resp.json()
+
+    all_games_seen = []
     games = []
     for date_block in data.get("dates", []):
         for g in date_block.get("games", []):
-            if g.get("status", {}).get("detailedState") != "Final":
+            status = g.get("status", {})
+            all_games_seen.append(status.get("detailedState") or status.get("abstractGameState") or "UNKNOWN")
+            is_final = (status.get("detailedState") == "Final"
+                        or status.get("abstractGameState") == "Final"
+                        or status.get("codedGameState") == "F")
+            if not is_final:
                 continue
             games.append({
                 "gamePk": g["gamePk"],
                 "home_team": g["teams"]["home"]["team"]["name"],
                 "away_team": g["teams"]["away"]["team"]["name"],
             })
+
+    print(f"  [debug] schedule returned {len(all_games_seen)} total games for {date_str}, "
+          f"statuses seen: {set(all_games_seen)}")
     return games
 
 
@@ -103,19 +113,25 @@ def store_bullpen_usage(team, game_date, relief_innings, relief_count):
 def run(date_str):
     games = fetch_schedule(date_str)
     stored = 0
+    errors = 0
     for g in games:
         try:
             boxscore = fetch_boxscore(g["gamePk"])
         except requests.RequestException as e:
-            print(f"  gamePk {g['gamePk']}: request failed ({e})")
+            print(f"  gamePk {g['gamePk']}: boxscore request failed ({e})")
+            errors += 1
             continue
 
         for side, team_name in (("home", g["home_team"]), ("away", g["away_team"])):
-            innings, count = compute_bullpen_usage(boxscore["teams"][side])
-            store_bullpen_usage(team_name, date_str, innings, count)
-            stored += 1
+            try:
+                innings, count = compute_bullpen_usage(boxscore["teams"][side])
+                store_bullpen_usage(team_name, date_str, innings, count)
+                stored += 1
+            except Exception as e:
+                print(f"  gamePk {g['gamePk']} ({side}): parsing failed ({e})")
+                errors += 1
 
-    print(f"{date_str}: {len(games)} completed games processed, {stored} team-bullpen rows stored.")
+    print(f"{date_str}: {len(games)} completed games found, {stored} team-bullpen rows stored, {errors} errors.")
 
 
 def main():
