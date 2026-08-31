@@ -5,11 +5,8 @@ Edit SPORTS / API keys here. Nothing else should need editing to get started.
 
 import os
 
-# ---- API keys (set as environment variables, never hardcode) ----
-ODDSPAPI_KEY = os.environ.get("ODDSPAPI_KEY", "")  # free key from https://oddspapi.io
+ODDSPAPI_KEY = os.environ.get("ODDSPAPI_KEY", "")
 
-# ---- Sports in scope ----
-# ESPN slugs (for results) and OddsPapi sport identifiers (for odds) side by side.
 SPORTS = {
     "mlb": {
         "espn_sport": "baseball",
@@ -41,15 +38,16 @@ SPORTS = {
     },
 }
 
-# ---- Storage ----
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "edge_finder.db")
 
-# ---- Signal thresholds (starting points - recalibrate once backtest.py has real data) ----
 STEAM_MOVE_SPREAD_POINTS = 1.0
 STEAM_WINDOW_MINUTES = 90
 STEAM_MOVE_ML_CENTS = 20
 STEAM_MOVE_ML_PROB = 0.05
 MIN_SIGNAL_STRENGTH_TO_RECOMMEND = 0.6
+
+# ---- Bullpen fatigue (MLB only) ----
+BULLPEN_HEAVY_INNINGS_THRESHOLD = 4.0
 
 # ---- Odds API request budgeting ----
 MAX_ODDSPAPI_CALLS_PER_RUN = 2
