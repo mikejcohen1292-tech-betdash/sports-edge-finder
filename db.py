@@ -79,6 +79,19 @@ CREATE TABLE IF NOT EXISTS recommendations (
     FOREIGN KEY (signal_id) REFERENCES signals(id)
 );
 
+-- Bullpen usage per team per date, from MLB's official free Stats API.
+-- Feeds the bullpen-fatigue signal: heavy bullpen usage yesterday -> more
+-- likely to lose today, per the trend you flagged.
+CREATE TABLE IF NOT EXISTS bullpen_usage (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    team                TEXT NOT NULL,
+    game_date           TEXT NOT NULL,
+    relief_innings      REAL NOT NULL,
+    relief_pitcher_count INTEGER NOT NULL,
+    captured_at         TEXT NOT NULL,
+    UNIQUE(team, game_date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_odds_game ON odds_snapshots(game_id);
 CREATE INDEX IF NOT EXISTS idx_signals_game ON signals(game_id);
 CREATE INDEX IF NOT EXISTS idx_games_sport_time ON games(sport, commence_time);
