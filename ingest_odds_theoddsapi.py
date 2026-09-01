@@ -1,21 +1,17 @@
 """
-Pulls moneyline odds from The Odds API (the-odds-api.com) — a well-known,
-well-documented provider built specifically for this use case. Replaces
-ingest_odds_oddspapi.py, whose data structure turned out to be too
-undocumented and inconsistent to reliably decode.
+Pulls moneyline AND point spread odds from The Odds API (the-odds-api.com).
 
-Why this one is simpler and more trustworthy:
+Why this is simpler and more trustworthy than the old provider:
   - Team names are spelled out directly on every outcome (e.g. "Atlanta
     Braves"), matched against the event's own home_team/away_team fields.
     No more guessing whether "participant1" means home or away.
-  - The moneyline market has one clean, documented key: "h2h". No catalog
-    of thousands of ambiguous numeric market IDs to sort through.
+  - Markets have clean, documented keys ("h2h" for moneyline, "spreads" for
+    point spread). No catalog of ambiguous numeric market IDs to sort through.
   - One API call returns the WHOLE day's games for a sport, across many
-    real, well-known sportsbooks (DraftKings, FanDuel, BetMGM, etc.) — not
-    per-fixture calls against hundreds of obscure/broken books.
+    real, well-known sportsbooks (DraftKings, FanDuel, BetMGM, etc.).
 
-Free tier: 500 credits/month. Requesting just the h2h market for one region
-costs 1 credit per call, so this is a very comfortable budget.
+Free tier: 500 credits/month. Two markets x one region = 2 credits per call.
+4 sports x 1 call/day x 2 credits x 30 days = 240 credits/month.
 
 Usage:
     python ingest_odds_theoddsapi.py --sport mlb
@@ -42,6 +38,7 @@ def _require_key():
 
 
 def fetch_odds(sport_key, session):
+    """Pulls both moneyline (h2h) and point spread markets in one call."""
     _require_key()
     theoddsapi_key = SPORTS[sport_key]["theoddsapi_key"]
     resp = session.get(
@@ -49,7 +46,7 @@ def fetch_odds(sport_key, session):
         params={
             "apiKey": ODDS_API_KEY,
             "regions": "us",
-            "markets": "h2h",
+            "markets": "h2h,spreads",
             "oddsFormat": "decimal",
         },
         timeout=20,
@@ -78,6 +75,9 @@ def resolve_game_id(conn, sport_key, home_name, away_name, start_time_iso):
     return None
 
 
+MARKET_LABEL = {"h2h": "moneyline", "spreads": "spread"}
+
+
 def parse_event(sport_key, event, conn):
     home_team = event.get("home_team")
     away_team = event.get("away_team")
@@ -94,18 +94,25 @@ def parse_event(sport_key, event, conn):
     odds_rows = []
     for book in event.get("bookmakers", []):
         book_key = book.get("key", "unknown")
-        h2h = next((m for m in book.get("markets", []) if m.get("key") == "h2h"), None)
-        if not h2h:
-            continue
-        outcomes = h2h.get("outcomes", [])
-        home_price = next((o.get("price") for o in outcomes if o.get("name") == home_team), None)
-        away_price = next((o.get("price") for o in outcomes if o.get("name") == away_team), None)
-        if home_price is None or away_price is None:
-            continue
-        odds_rows.append((
-            game_id, book_key, captured_at, "moneyline",
-            home_price, away_price, None, None,
-        ))
+        for market in book.get("markets", []):
+            market_label = MARKET_LABEL.get(market.get("key"))
+            if not market_label:
+                continue
+            outcomes = market.get("outcomes", [])
+            home_outcome = next((o for o in outcomes if o.get("name") == home_team), None)
+            away_outcome = next((o for o in outcomes if o.get("name") == away_team), None)
+            if not home_outcome or not away_outcome:
+                continue
+            home_price = home_outcome.get("price")
+            away_price = away_outcome.get("price")
+            home_point = home_outcome.get("point")
+            away_point = away_outcome.get("point")
+            if home_price is None or away_price is None:
+                continue
+            odds_rows.append((
+                game_id, book_key, captured_at, market_label,
+                home_price, away_price, home_point, away_point,
+            ))
 
     return games_row, odds_rows
 
