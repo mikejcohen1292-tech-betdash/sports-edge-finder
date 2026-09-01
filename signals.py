@@ -1,20 +1,13 @@
 """
 Computes betting signals from stored odds snapshots.
 
-1. steam_moneyline
-   Sharp, fast shift in implied win probability from moneyline price moves.
+1. steam_moneyline — sharp, fast shift in implied win probability.
+2. steam_spread / steam_total — safe no-op currently.
+3. reverse_line_movement — only fires if public_betting has rows.
+4. bullpen_fatigue (MLB only) — heavy bullpen usage yesterday flagged today.
 
-2. steam_spread / steam_total
-   Safe no-op currently — needs more decoding work before real signals.
-
-3. reverse_line_movement
-   Only fires if public_betting has rows (not currently wired in).
-
-4. bullpen_fatigue (MLB only)
-   A team that leaned heavily on its bullpen the day before is flagged as
-   more likely to lose today — the trend you flagged, tested with real data.
-
-Run this after ingesting odds, before backtest.py or recommend.py.
+All moneyline-based signals now also capture the real price, so
+recommendations show actual risk instead of treating every play the same.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -111,21 +104,30 @@ def compute_moneyline_steam(game_id, conn):
     if abs(move) >= STEAM_MOVE_ML_PROB and minutes <= STEAM_WINDOW_MINUTES:
         favored_side = "home" if move > 0 else "away"
         strength = min(1.0, abs(move) / (STEAM_MOVE_ML_PROB * 3))
+        odds_price = close_row["home_price"] if favored_side == "home" else close_row["away_price"]
         return [{
             "signal_type": "steam_moneyline",
             "favored_side": favored_side,
             "strength": round(strength, 3),
             "open_point": round(open_home_prob, 4),
             "close_point": round(close_home_prob, 4),
+            "odds_price": odds_price,
         }]
     return []
 
 
+def _latest_moneyline_price(game_id, side, conn):
+    row = conn.execute(
+        """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'moneyline'
+           ORDER BY captured_at DESC LIMIT 1""",
+        (game_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return row["home_price"] if side == "home" else row["away_price"]
+
+
 def compute_bullpen_fatigue_signal(game_id, conn):
-    """MLB only. Checks if either team leaned heavily on its bullpen in its
-    most recent game (yesterday, typically) — the trend you flagged. Only
-    fires when exactly one side was heavy and the other wasn't, favoring
-    the side that WASN'T fatigued."""
     game = conn.execute(
         "SELECT * FROM games WHERE game_id = ? AND sport = 'mlb'", (game_id,)
     ).fetchone()
@@ -136,10 +138,11 @@ def compute_bullpen_fatigue_signal(game_id, conn):
     prev_date = (datetime.fromisoformat(game_date) - timedelta(days=1)).strftime("%Y-%m-%d")
 
     def usage_for(team_name):
-        return conn.execute(
+        row = conn.execute(
             "SELECT * FROM bullpen_usage WHERE game_date = ? AND team = ?",
             (prev_date, team_name),
         ).fetchone()
+        return row
 
     home_usage = usage_for(game["home_team"])
     away_usage = usage_for(game["away_team"])
@@ -155,6 +158,7 @@ def compute_bullpen_fatigue_signal(game_id, conn):
     favored_side = "away" if home_heavy else "home"
     heavy_innings = home_usage["relief_innings"] if home_heavy else away_usage["relief_innings"]
     strength = min(1.0, (heavy_innings - BULLPEN_HEAVY_INNINGS_THRESHOLD + 1) / 3.0)
+    odds_price = _latest_moneyline_price(game_id, favored_side, conn)
 
     return [{
         "signal_type": "bullpen_fatigue",
@@ -162,6 +166,7 @@ def compute_bullpen_fatigue_signal(game_id, conn):
         "strength": round(strength, 3),
         "open_point": None,
         "close_point": None,
+        "odds_price": odds_price,
     }]
 
 
@@ -201,12 +206,14 @@ def compute_rlm_signals(game_id, conn):
         return []
 
     strength = min(1.0, abs(move) / (STEAM_MOVE_ML_PROB * 2))
+    odds_price = close_row["home_price"] if line_favored_side == "home" else close_row["away_price"]
     return [{
         "signal_type": "reverse_line_movement",
         "favored_side": line_favored_side,
         "strength": round(strength, 3),
         "open_point": round(open_home_prob, 4),
         "close_point": round(close_home_prob, 4),
+        "odds_price": odds_price,
     }]
 
 
@@ -232,10 +239,10 @@ def compute_all_signals(sport_key=None):
         for sig in found:
             conn.execute(
                 """INSERT INTO signals (game_id, sport, signal_type, favored_side, strength,
-                                         open_point, close_point, computed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         open_point, close_point, computed_at, odds_price)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (game_id, sport, sig["signal_type"], sig["favored_side"], sig["strength"],
-                 sig["open_point"], sig["close_point"], computed_at),
+                 sig["open_point"], sig["close_point"], computed_at, sig.get("odds_price")),
             )
             total += 1
     conn.commit()
