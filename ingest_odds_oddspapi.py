@@ -3,13 +3,11 @@ Pulls odds (moneyline + spread) from OddsPapi and stores snapshots.
 
 IMPORTANT — free tier reality: OddsPapi's free key is capped around 250
 requests/month. That's not enough to poll continuously across 4 sports, so
-this script defaults to ONE efficient snapshot per sport per run. Point cron
-at this a few times a day (e.g. morning open, midday, close) rather than
-polling every few minutes, or you'll burn the month's quota in a week.
+this script defaults to ONE efficient snapshot per sport per run.
 
 Usage:
-    python ingest_odds_oddspapi.py --sport mlb                 # today's live snapshot
-    python ingest_odds_oddspapi.py --sport mlb --backfill-days 14  # free historical, if available
+    python ingest_odds_oddspapi.py --sport mlb
+    python ingest_odds_oddspapi.py --sport mlb --backfill-days 14
 
 Set your key first:
     export ODDSPAPI_KEY=your_free_key_here
@@ -54,9 +52,6 @@ def get_sport_id(sport_slug, session):
 
 
 def fetch_fixtures(sport_cfg, league_key, session, days_ahead=1):
-    """Fixtures for a sport, filtered to the target league by tournamentName, with
-    fixtures that actually have odds posted (hasOdds=true) sorted first — otherwise
-    we can easily spend our call budget on games nobody's priced yet."""
     time.sleep(2.5)
     sport_id = get_sport_id(sport_cfg["oddspapi_sport"], session)
     date_from = datetime.now(timezone.utc).date().isoformat()
@@ -105,13 +100,6 @@ def fetch_historical_odds_for_fixture(fixture_id, session):
 
 
 def _classify_market(a_point, b_point):
-    """Identifies spread / total / moneyline from the actual price shape rather
-    than OddsPapi's internal numeric market IDs, which aren't publicly documented
-    per-sport and would otherwise be a guess. The pattern is reliable:
-      - no point on either side           -> moneyline
-      - points are opposite (~sum to 0)   -> spread  (e.g. -1.5 / +1.5)
-      - points are equal (~same number)   -> total    (e.g. 8.5 / 8.5, over/under)
-    """
     if a_point is None or b_point is None:
         return "moneyline"
     if abs(a_point + b_point) < 0.15:
@@ -122,11 +110,6 @@ def _classify_market(a_point, b_point):
 
 
 def resolve_game_id(conn, sport_key, home_name, away_name, start_time_iso):
-    """Odds data (OddsPapi) and results data (ESPN) invent different IDs for
-    the same real game. Without this, a result can never attach to an
-    odds-sourced recommendation. Looks for an existing game (created by ESPN
-    ingestion) on the same date with matching team names, and reuses ITS id
-    instead of inventing a new one — so results can actually join later."""
     if not start_time_iso:
         return None
     date_str = start_time_iso[:10]
@@ -147,14 +130,12 @@ def resolve_game_id(conn, sport_key, home_name, away_name, start_time_iso):
 
 
 def _parse_and_store_snapshot(sport_key, fixture, odds_payload, conn):
-    """
-    Normalizes OddsPapi's response into our odds_snapshots rows. Resolves to
-    an existing ESPN-sourced game_id when one matches (see resolve_game_id)
-    so results can join to it later; falls back to an OddsPapi-derived id
-    only when no matching ESPN game exists yet.
-    """
-    fixture_home = fixture.get("participant1Name", "Home")
-    fixture_away = fixture.get("participant2Name", "Away")
+    # CONFIRMED via cross-checking real sportsbook odds: OddsPapi lists the
+    # visiting team first. participant1 = AWAY, participant2 = HOME — the
+    # opposite of what this code originally assumed, which silently swapped
+    # every home/away price this ingestion ever recorded.
+    fixture_away = fixture.get("participant1Name", "Away")
+    fixture_home = fixture.get("participant2Name", "Home")
     start_time = fixture.get("startTime")
 
     resolved_id = resolve_game_id(conn, sport_key, fixture_home, fixture_away, start_time)
@@ -181,15 +162,16 @@ def _parse_and_store_snapshot(sport_key, fixture, odds_payload, conn):
                 p0 = players.get("0", {})
                 return p0.get("price"), p0.get("line") or p0.get("point")
 
-            (a_price, a_point) = _price(outcome_list[0])
-            (b_price, b_point) = _price(outcome_list[1])
-            market_label = _classify_market(a_point, b_point)
+            # outcome index 0 = participant1 = AWAY, index 1 = participant2 = HOME
+            (away_price, away_point) = _price(outcome_list[0])
+            (home_price, home_point) = _price(outcome_list[1])
+            market_label = _classify_market(home_point, away_point)
             if market_label == "unknown":
                 continue
 
             rows_odds.append((
                 game_id, book_name, captured_at, market_label,
-                a_price, b_price, a_point, b_point,
+                home_price, away_price, home_point, away_point,
             ))
     return rows_games, rows_odds
 
@@ -237,11 +219,6 @@ def run_daily_snapshot(sport_key):
 
 
 def run_historical_backfill(sport_key, max_fixtures=None):
-    """
-    Pulls whatever free historical odds OddsPapi has archived. Coverage depends
-    on when their archive started, not on your season needs — check what comes
-    back before assuming it's complete.
-    """
     sport_cfg = SPORTS[sport_key]
     session = requests.Session()
     fixtures = fetch_fixtures(sport_cfg, sport_key, session, days_ahead=1)
