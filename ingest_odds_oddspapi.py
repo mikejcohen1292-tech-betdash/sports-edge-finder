@@ -121,17 +121,49 @@ def _classify_market(a_point, b_point):
     return "unknown"
 
 
-def _parse_and_store_snapshot(sport_key, fixture, odds_payload):
+def resolve_game_id(conn, sport_key, home_name, away_name, start_time_iso):
+    """Odds data (OddsPapi) and results data (ESPN) invent different IDs for
+    the same real game. Without this, a result can never attach to an
+    odds-sourced recommendation. Looks for an existing game (created by ESPN
+    ingestion) on the same date with matching team names, and reuses ITS id
+    instead of inventing a new one — so results can actually join later."""
+    if not start_time_iso:
+        return None
+    date_str = start_time_iso[:10]
+    candidates = conn.execute(
+        "SELECT game_id, home_team, away_team FROM games WHERE sport = ? AND commence_time LIKE ?",
+        (sport_key, date_str + "%"),
+    ).fetchall()
+
+    def names_match(a, b):
+        a, b = (a or "").lower(), (b or "").lower()
+        return bool(a) and bool(b) and (a in b or b in a)
+
+    for g in candidates:
+        if ((names_match(home_name, g["home_team"]) and names_match(away_name, g["away_team"])) or
+                (names_match(home_name, g["away_team"]) and names_match(away_name, g["home_team"]))):
+            return g["game_id"]
+    return None
+
+
+def _parse_and_store_snapshot(sport_key, fixture, odds_payload, conn):
     """
-    Normalizes OddsPapi's response into our odds_snapshots rows.
+    Normalizes OddsPapi's response into our odds_snapshots rows. Resolves to
+    an existing ESPN-sourced game_id when one matches (see resolve_game_id)
+    so results can join to it later; falls back to an OddsPapi-derived id
+    only when no matching ESPN game exists yet.
     """
-    game_id = f"{sport_key}_{fixture['fixtureId']}"
+    fixture_home = fixture.get("participant1Name", "Home")
+    fixture_away = fixture.get("participant2Name", "Away")
+    start_time = fixture.get("startTime")
+
+    resolved_id = resolve_game_id(conn, sport_key, fixture_home, fixture_away, start_time)
+    game_id = resolved_id or f"{sport_key}_{fixture['fixtureId']}"
+
     captured_at = datetime.now(timezone.utc).isoformat()
     rows_games = [(
-        game_id, sport_key,
-        fixture.get("participant1Name", "Home"),
-        fixture.get("participant2Name", "Away"),
-        fixture.get("startTime"), str(datetime.now().year),
+        game_id, sport_key, fixture_home, fixture_away,
+        start_time, str(datetime.now().year),
     )]
 
     rows_odds = []
@@ -186,6 +218,7 @@ def run_daily_snapshot(sport_key):
     fixtures = fetch_fixtures(sport_cfg, sport_key, session)
     calls_used = 1
     total_odds_rows = 0
+    conn = get_connection()
     for fixture in fixtures:
         if calls_used >= MAX_ODDSPAPI_CALLS_PER_RUN:
             print(f"  Hit MAX_ODDSPAPI_CALLS_PER_RUN ({MAX_ODDSPAPI_CALLS_PER_RUN}), stopping early to protect quota.")
@@ -194,15 +227,21 @@ def run_daily_snapshot(sport_key):
             time.sleep(1.2)
             odds_payload = fetch_odds_for_fixture(fixture["fixtureId"], session)
             calls_used += 1
-            g, o = _parse_and_store_snapshot(sport_key, fixture, odds_payload)
+            g, o = _parse_and_store_snapshot(sport_key, fixture, odds_payload, conn)
             store(g, o)
             total_odds_rows += len(o)
         except requests.RequestException as e:
             print(f"  fixture {fixture.get('fixtureId')}: request failed ({e})")
+    conn.close()
     print(f"{sport_key}: {len(fixtures)} fixtures checked, {total_odds_rows} odds rows stored, {calls_used} API calls used.")
 
 
 def run_historical_backfill(sport_key, max_fixtures=None):
+    """
+    Pulls whatever free historical odds OddsPapi has archived. Coverage depends
+    on when their archive started, not on your season needs — check what comes
+    back before assuming it's complete.
+    """
     sport_cfg = SPORTS[sport_key]
     session = requests.Session()
     fixtures = fetch_fixtures(sport_cfg, sport_key, session, days_ahead=1)
@@ -210,6 +249,7 @@ def run_historical_backfill(sport_key, max_fixtures=None):
         fixtures = fixtures[:max_fixtures]
     calls_used = 1
     total_odds_rows = 0
+    conn = get_connection()
     for fixture in fixtures:
         if calls_used >= MAX_ODDSPAPI_CALLS_PER_RUN:
             print(f"  Hit call budget, stopping early.")
@@ -218,11 +258,12 @@ def run_historical_backfill(sport_key, max_fixtures=None):
             time.sleep(1.2)
             hist_payload = fetch_historical_odds_for_fixture(fixture["fixtureId"], session)
             calls_used += 1
-            g, o = _parse_and_store_snapshot(sport_key, fixture, hist_payload)
+            g, o = _parse_and_store_snapshot(sport_key, fixture, hist_payload, conn)
             store(g, o)
             total_odds_rows += len(o)
         except requests.RequestException as e:
             print(f"  fixture {fixture.get('fixtureId')}: request failed ({e})")
+    conn.close()
     print(f"{sport_key} historical: {total_odds_rows} odds rows stored, {calls_used} API calls used.")
 
 
