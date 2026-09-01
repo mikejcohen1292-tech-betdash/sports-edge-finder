@@ -2,8 +2,8 @@ name: Daily Sports Data Pipeline
 
 on:
   schedule:
-    - cron: '0 13 * * *'
-  workflow_dispatch: {}
+    - cron: '0 13 * * *'   # 9:00 AM US Eastern, every day
+  workflow_dispatch: {}     # adds a manual "Run workflow" button too
 
 permissions:
   contents: write
@@ -22,6 +22,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Pull today's results (safe to re-run, skips duplicates)
+        continue-on-error: true
         run: |
           python ingest_results_espn.py --sport mlb --today
           python ingest_results_espn.py --sport wnba --today
@@ -29,9 +30,11 @@ jobs:
           python ingest_results_espn.py --sport ncaaf --today
 
       - name: Pull yesterday's MLB bullpen usage (official MLB Stats API, free)
+        continue-on-error: true
         run: python ingest_bullpen_usage.py
 
       - name: Pull today's odds
+        continue-on-error: true
         env:
           ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
         run: |
@@ -41,9 +44,11 @@ jobs:
           python ingest_odds_oddspapi.py --sport ncaaf
 
       - name: Compute signals
+        continue-on-error: true
         run: python signals.py
 
       - name: Generate today's recommendations
+        continue-on-error: true
         run: |
           python recommend.py --sport mlb
           python recommend.py --sport wnba
@@ -51,6 +56,7 @@ jobs:
           python recommend.py --sport ncaaf
 
       - name: Grade past recommendations against finished games
+        continue-on-error: true
         run: python grade_recommendations.py
 
       - name: Build dashboard
