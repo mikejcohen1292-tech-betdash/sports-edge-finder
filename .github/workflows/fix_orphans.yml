@@ -1,0 +1,40 @@
+name: One-Time Orphan Game Repair
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Reconcile orphaned games
+        run: python fix_orphan_games.py
+
+      - name: Re-grade recommendations now that IDs are fixed
+        run: python grade_recommendations.py
+
+      - name: Rebuild dashboard
+        run: |
+          python dashboard.py
+          mkdir -p docs
+          cp data/dashboard.html docs/index.html
+
+      - name: Save to repo
+        run: |
+          git config user.name "sports-edge-bot"
+          git config user.email "actions@github.com"
+          git add data docs
+          git commit -m "Orphan game repair" || echo "Nothing new to commit"
+          git push
