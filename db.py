@@ -79,9 +79,6 @@ CREATE TABLE IF NOT EXISTS recommendations (
     FOREIGN KEY (signal_id) REFERENCES signals(id)
 );
 
--- Bullpen usage per team per date, from MLB's official free Stats API.
--- Feeds the bullpen-fatigue signal: heavy bullpen usage yesterday -> more
--- likely to lose today, per the trend you flagged.
 CREATE TABLE IF NOT EXISTS bullpen_usage (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     team                TEXT NOT NULL,
@@ -99,6 +96,15 @@ CREATE INDEX IF NOT EXISTS idx_recs_graded ON recommendations(graded);
 """
 
 
+# Columns added after the tables already existed in the live database.
+# ALTER TABLE has no "IF NOT EXISTS" for columns, so these are applied inside
+# a try/except that quietly skips a column that's already there.
+MIGRATIONS = [
+    "ALTER TABLE signals ADD COLUMN odds_price REAL",
+    "ALTER TABLE recommendations ADD COLUMN odds_price REAL",
+]
+
+
 def get_connection():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -111,6 +117,12 @@ def init_db():
     conn = get_connection()
     conn.executescript(SCHEMA)
     conn.commit()
+    for migration in MIGRATIONS:
+        try:
+            conn.execute(migration)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
     conn.close()
     print(f"Database ready at {DB_PATH}")
 
