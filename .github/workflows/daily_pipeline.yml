@@ -29,6 +29,15 @@ jobs:
           python ingest_results_espn.py --sport nfl --today
           python ingest_results_espn.py --sport ncaaf --today
 
+      - name: Re-check yesterday's finals (catches games that ended after yesterday's run)
+        continue-on-error: true
+        run: |
+          YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
+          python ingest_results_espn.py --sport mlb --start $YESTERDAY --end $YESTERDAY
+          python ingest_results_espn.py --sport wnba --start $YESTERDAY --end $YESTERDAY
+          python ingest_results_espn.py --sport nfl --start $YESTERDAY --end $YESTERDAY
+          python ingest_results_espn.py --sport ncaaf --start $YESTERDAY --end $YESTERDAY
+
       - name: Pull yesterday's MLB bullpen usage (official MLB Stats API, free)
         continue-on-error: true
         run: python ingest_bullpen_usage.py
