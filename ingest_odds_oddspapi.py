@@ -5,10 +5,11 @@ IMPORTANT — free tier reality: OddsPapi's free key is capped around 250
 requests/month. This script defaults to ONE efficient snapshot per sport per
 run.
 
-Only stores the specific market ID identified as the real full-game
-moneyline (via fetch_market_catalog.py's catalog) — not every
-similarly-shaped market, which was mixing first-5-innings, alternate lines,
-and player props together.
+Each fixture has its OWN unique market IDs (confirmed: OddsPapi's catalog has
+32,000+ entries for one sport, many named identically "Winner" with
+different IDs) — so every market ID present in a fixture's odds is checked
+individually against the catalog to find the real full-game moneyline, not
+looked up by one fixed ID per sport.
 
 Usage:
     python ingest_odds_oddspapi.py --sport mlb
@@ -124,56 +125,39 @@ def resolve_game_id(conn, sport_key, home_name, away_name, start_time_iso):
     return None
 
 
-EXCLUDE_PERIOD_SUBSTRINGS = [
-    "1st5", "first5", "5inning", "half", "quarter", "period",
-    "1sthalf", "2ndhalf", "1st", "2nd", "3rd", "4th", "set", "leg",
-]
-
-_MAIN_ML_CACHE = {}
-
-
-def _main_moneyline_market_id(sport_id, conn):
-    """The one specific market ID (from OddsPapi's own catalog, fetched by
-    fetch_market_catalog.py) that represents the real full-game moneyline —
-    not a first-5-innings or other sub-market that happens to look the same.
-    Returns None if the catalog hasn't been fetched yet for this sport."""
-    if sport_id in _MAIN_ML_CACHE:
-        return _MAIN_ML_CACHE[sport_id]
-
-    rows = conn.execute(
-        "SELECT * FROM market_catalog WHERE sport_id = ? AND player_prop = 0", (sport_id,)
-    ).fetchall()
-    candidates = []
-    for r in rows:
-        market_type = (r["market_type"] or "").lower()
-        market_name = (r["market_name"] or "").lower()
-        period = (r["period"] or "").lower()
-        if market_type not in ("moneyline", "1x2", "h2h"):
-            continue
-        if r["handicap"] not in (0, 0.0, None):
-            continue
-        if any(sub in period for sub in EXCLUDE_PERIOD_SUBSTRINGS):
-            continue
-        if any(sub in market_name for sub in EXCLUDE_PERIOD_SUBSTRINGS):
-            continue
-        candidates.append(r)
-
-    if not candidates:
-        _MAIN_ML_CACHE[sport_id] = None
-        return None
-    candidates.sort(key=lambda r: len(r["market_name"] or ""))
-    result = candidates[0]["market_id"]
-    _MAIN_ML_CACHE[sport_id] = result
-    return result
+def _is_main_moneyline_market(market_id, conn):
+    """Checks ONE specific market ID against OddsPapi's catalog. Each game
+    gets its OWN unique market IDs, so there's no single constant to cache
+    per sport — this is checked per market ID actually present in a given
+    fixture's odds payload. period == 'result' means the full game; p1-p9
+    are individual innings, p1+p2 etc. are partial-game combinations."""
+    row = conn.execute(
+        "SELECT * FROM market_catalog WHERE market_id = ?", (market_id,)
+    ).fetchone()
+    if not row:
+        return False
+    market_type = (row["market_type"] or "").lower()
+    period = (row["period"] or "").lower()
+    if market_type not in ("moneyline", "1x2", "h2h"):
+        return False
+    if row["player_prop"]:
+        return False
+    if row["handicap"] not in (0, 0.0, None):
+        return False
+    if period != "result":
+        return False
+    return True
 
 
 def _parse_and_store_snapshot(sport_key, fixture, odds_payload, conn):
     """
-    Only stores the ONE market ID identified as the real full-game moneyline
-    (see _main_moneyline_market_id) — not every similarly-shaped market.
+    Normalizes OddsPapi's response into our odds_snapshots rows. Resolves to
+    an existing ESPN-sourced game_id when one matches (see resolve_game_id).
+
+    Every market ID present in THIS fixture's odds is checked individually
+    against the catalog (see _is_main_moneyline_market) to find the real
+    full-game moneyline.
     """
-    # CONFIRMED via cross-checking real sportsbook odds: OddsPapi lists the
-    # visiting team first. participant1 = AWAY, participant2 = HOME.
     fixture_away = fixture.get("participant1Name", "Away")
     fixture_home = fixture.get("participant2Name", "Home")
     start_time = fixture.get("startTime")
@@ -187,23 +171,23 @@ def _parse_and_store_snapshot(sport_key, fixture, odds_payload, conn):
         start_time, str(datetime.now().year),
     )]
 
-    sport_id = SPORT_ID_MAP.get(SPORTS[sport_key]["oddspapi_sport"])
-    main_ml_id = _main_moneyline_market_id(sport_id, conn) if sport_id else None
-
     rows_odds = []
-    if main_ml_id is None:
-        # Catalog not fetched yet for this sport — don't fall back to the old
-        # guess-by-shape heuristic. Run fetch_market_catalog.py first.
-        return rows_games, rows_odds
-
     bookmaker_odds = odds_payload.get("bookmakerOdds", {})
     for book_name, book_data in bookmaker_odds.items():
         markets = book_data.get("markets", {})
-        market = markets.get(str(main_ml_id))
-        if not market:
+        main_market = None
+        for market_id_str, market in markets.items():
+            try:
+                market_id_int = int(market_id_str)
+            except (TypeError, ValueError):
+                continue
+            if _is_main_moneyline_market(market_id_int, conn):
+                main_market = market
+                break
+        if main_market is None:
             continue
 
-        outcomes = market.get("outcomes", {})
+        outcomes = main_market.get("outcomes", {})
         outcome_list = list(outcomes.items())
         if len(outcome_list) < 2:
             continue
