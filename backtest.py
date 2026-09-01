@@ -1,250 +1,185 @@
 """
-Generates a single self-contained HTML dashboard from whatever is in the
-database right now. No server needed — open the file in a browser.
+Joins computed signals to actual game results and reports whether each
+signal type actually wins money — with sample-size honesty baked in.
+
+This is the answer to your original question: is this trend real, or noise?
 
 Usage:
-    python dashboard.py
-    open data/dashboard.html
+    python backtest.py                # all sports, all signal types
+    python backtest.py --sport mlb
 """
 
-import json
-from datetime import datetime, timezone
+import argparse
+import csv
+import math
 
 from db import get_connection, init_db
-from backtest import run_backtest
 
-TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Sports Edge Finder — Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<style>
-  body {{ font-family: -apple-system, Segoe UI, sans-serif; background: #0f1117; color: #e6e8eb; margin: 0; padding: 32px; }}
-  h1 {{ font-size: 22px; margin-bottom: 4px; }}
-  h2 {{ font-size: 16px; margin: 0 0 14px 0; }}
-  .subtitle {{ color: #9099a8; margin-bottom: 28px; font-size: 14px; }}
-  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-bottom: 32px; }}
-  .card {{ background: #171a22; border: 1px solid #262b36; border-radius: 12px; padding: 20px; }}
-  .card h3 {{ margin-top: 0; font-size: 14px; color: #9099a8; text-transform: uppercase; letter-spacing: 0.04em; }}
-  .highlight {{ border: 1px solid #3b4b6b; background: #131a2a; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-  th, td {{ text-align: left; padding: 8px 6px; border-bottom: 1px solid #262b36; }}
-  th {{ color: #9099a8; font-weight: 500; }}
-  .win {{ color: #4ade80; }}
-  .loss {{ color: #f87171; }}
-  .push {{ color: #9099a8; }}
-  .small-sample {{ color: #fbbf24; font-size: 11px; }}
-  .empty {{ color: #6b7280; font-style: italic; padding: 20px 0; }}
-  canvas {{ max-height: 280px; }}
-  .badge {{ display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }}
-  .badge-home {{ background: #1e3a5f; color: #93c5fd; }}
-  .badge-away {{ background: #4a1d3d; color: #f9a8d4; }}
-</style>
-</head>
-<body>
-<h1>Sports Edge Finder</h1>
-<div class="subtitle">Generated {generated_at} · {n_games} games tracked · {n_signals} signals computed</div>
-
-<div class="card highlight" style="margin-bottom:20px;">
-  <h2>Today's Recommended Plays</h2>
-  {todays_plays_html}
-</div>
-
-<div class="card" style="margin-bottom:32px;">
-  <h2>Recommendation Track Record</h2>
-  <div class="subtitle" style="margin-bottom:12px;">Not the full backtest below — this is specifically what the
-  system actually told you to bet on past mornings, graded against what happened.</div>
-  {track_record_html}
-</div>
-
-<div class="grid">
-  <div class="card">
-    <h3>Signal performance (ATS, vs -110 breakeven of 52.4%)</h3>
-    {backtest_table}
-  </div>
-  <div class="card">
-    <h3>Win % by signal type</h3>
-    <canvas id="winPctChart"></canvas>
-  </div>
-  <div class="card">
-    <h3>Games tracked per sport</h3>
-    <canvas id="sportCountChart"></canvas>
-  </div>
-  <div class="card">
-    <h3>Signal volume over time</h3>
-    <canvas id="signalTimelineChart"></canvas>
-  </div>
-</div>
-
-<script>
-const backtestData = {backtest_json};
-const sportCounts = {sport_counts_json};
-const timeline = {timeline_json};
-
-new Chart(document.getElementById('winPctChart'), {{
-  type: 'bar',
-  data: {{
-    labels: backtestData.map(r => r.sport + ' / ' + r.signal_type),
-    datasets: [{{
-      label: 'Win %',
-      data: backtestData.map(r => r.win_pct),
-      backgroundColor: backtestData.map(r => r.win_pct >= 52.4 ? '#4ade80' : '#f87171')
-    }}]
-  }},
-  options: {{ plugins: {{ legend: {{ display: false }} }}, scales: {{ y: {{ min: 0, max: 100 }} }} }}
-}});
-
-new Chart(document.getElementById('sportCountChart'), {{
-  type: 'doughnut',
-  data: {{
-    labels: Object.keys(sportCounts),
-    datasets: [{{ data: Object.values(sportCounts), backgroundColor: ['#60a5fa','#a78bfa','#fb923c','#4ade80'] }}]
-  }}
-}});
-
-new Chart(document.getElementById('signalTimelineChart'), {{
-  type: 'line',
-  data: {{
-    labels: timeline.map(t => t.date),
-    datasets: [{{ label: 'Signals computed', data: timeline.map(t => t.count), borderColor: '#60a5fa', tension: 0.3 }}]
-  }}
-}});
-</script>
-</body>
-</html>
-"""
+STANDARD_JUICE = -110
 
 
-def build_backtest_table_html(rows):
-    if not rows:
-        return '<div class="empty">No graded signals yet — run the pipeline for a while first.</div>'
-    trs = ""
-    for r in rows:
-        cls = "win" if r["win_pct"] >= 52.4 else "loss"
-        note = '<div class="small-sample">small sample</div>' if r["n"] < 30 else ""
-        trs += (f"<tr><td>{r['sport']}</td><td>{r['signal_type']}</td><td>{r['n']}</td>"
-                f"<td class='{cls}'>{r['win_pct']}%</td><td>{r['roi_pct']}%{note}</td></tr>")
-    return (f"<table><thead><tr><th>Sport</th><th>Signal</th><th>N</th><th>Win%</th><th>ROI%</th>"
-            f"</tr></thead><tbody>{trs}</tbody></table>")
+def decimal_to_american(decimal_odds):
+    if decimal_odds >= 2.0:
+        return (decimal_odds - 1) * 100
+    return -100 / (decimal_odds - 1)
 
 
-def _american_odds_str(decimal_price):
-    if not decimal_price:
-        return "—"
-    if decimal_price >= 2.0:
-        american = (decimal_price - 1) * 100
+def american_to_profit(stake, odds):
+    if odds > 0:
+        return stake * (odds / 100.0)
     else:
-        american = -100 / (decimal_price - 1)
-    return f"{american:+.0f}"
+        return stake * (100.0 / abs(odds))
 
 
-def _suggest_units(strength):
-    if strength >= 0.9:
-        return 3
-    elif strength >= 0.75:
-        return 2
-    return 1
+def wilson_interval(wins, n, z=1.96):
+    if n == 0:
+        return (0.0, 0.0)
+    phat = wins / n
+    denom = 1 + z**2 / n
+    center = phat + z**2 / (2 * n)
+    margin = z * math.sqrt((phat * (1 - phat) + z**2 / (4 * n)) / n)
+    low = (center - margin) / denom
+    high = (center + margin) / denom
+    return (max(0, low), min(1, high))
 
 
-def build_todays_plays_html(conn):
-    today = datetime.now(timezone.utc).date().isoformat()
-    rows = conn.execute(
-        """SELECT rec.*, g.home_team, g.away_team
-           FROM recommendations rec
-           JOIN games g ON g.game_id = rec.game_id
-           WHERE date(rec.recommended_at) = ?
-           ORDER BY rec.strength DESC""",
-        (today,),
-    ).fetchall()
-    if not rows:
-        return ('<div class="empty">No games clear the bar today — that\'s a valid, correct '
-                'result on plenty of days, not a broken system.</div>')
-    trs = ""
-    for r in rows:
-        badge_cls = "badge-home" if r["favored_side"] == "home" else "badge-away"
-        matchup = f"{r['away_team']} @ {r['home_team']}"
-        odds_str = _american_odds_str(r["odds_price"]) if "odds_price" in r.keys() else "—"
-        units = _suggest_units(r["strength"])
-        trs += (f"<tr><td>{r['sport']}</td><td>{matchup}</td><td>{r['signal_type']}</td>"
-                f"<td><span class='badge {badge_cls}'>{r['favored_side'].upper()}</span></td>"
-                f"<td>{odds_str}</td><td>{units}u</td><td>{r['strength']:.2f}</td></tr>")
-    return (f"<table><thead><tr><th>Sport</th><th>Matchup</th><th>Signal</th><th>Take</th>"
-            f"<th>Odds</th><th>Units</th><th>Strength</th></tr></thead><tbody>{trs}</tbody></table>"
-            f"<div class='subtitle' style='margin-top:10px;'>Odds shown are the actual moneyline price — "
-            f"a heavy favorite and a live underdog are not the same bet even at equal strength. Units are a "
-            f"standard confidence-weighted sizing convention (1-3u), not a proven-optimal size. Check the "
-            f"track record below before sizing anything for real.</div>")
+def grade_spread_bet(favored_side, close_point, home_score, away_score):
+    margin = home_score - away_score
+    if favored_side == "home":
+        result = margin + close_point
+    else:
+        result = -margin - close_point
+    if result > 0:
+        return "win"
+    elif result < 0:
+        return "loss"
+    return "push"
 
 
-def build_track_record_html(conn):
-    rows = conn.execute("SELECT * FROM recommendations WHERE graded = 1").fetchall()
-    if not rows:
-        return '<div class="empty">No graded recommendations yet — check back once today\'s (or past) plays have finished.</div>'
-
-    wins = sum(1 for r in rows if r["outcome"] == "win")
-    losses = sum(1 for r in rows if r["outcome"] == "loss")
-    pushes = sum(1 for r in rows if r["outcome"] == "push")
-    n = wins + losses
-    win_pct = (wins / n * 100) if n else 0.0
-    cls = "win" if win_pct >= 52.4 else "loss"
-    note = '<div class="small-sample">Small sample — treat as informational, not conclusive.</div>' if n < 30 else ""
-
-    recent = sorted(rows, key=lambda r: r["recommended_at"], reverse=True)[:10]
-    recent_trs = ""
-    for r in recent:
-        oc = r["outcome"] or "pending"
-        odds_str = _american_odds_str(r["odds_price"]) if "odds_price" in r.keys() else "—"
-        recent_trs += (f"<tr><td>{r['recommended_at'][:10]}</td><td>{r['sport']}</td>"
-                        f"<td>{r['signal_type']}</td><td>{odds_str}</td><td class='{oc}'>{oc}</td></tr>")
-
-    return (f"<div style='font-size:28px;font-weight:700;' class='{cls}'>{win_pct:.1f}% "
-            f"<span style='font-size:14px;color:#9099a8;font-weight:400;'>({wins}-{losses}-{pushes} on {n} decided plays)</span></div>"
-            f"{note}<div style='margin-top:16px;'><table><thead><tr><th>Date</th><th>Sport</th>"
-            f"<th>Signal</th><th>Odds</th><th>Result</th></tr></thead><tbody>{recent_trs}</tbody></table></div>")
+def grade_total_bet(favored_side, close_point, home_score, away_score):
+    total_score = home_score + away_score
+    if favored_side == "over":
+        result = total_score - close_point
+    else:
+        result = close_point - total_score
+    if result > 0:
+        return "win"
+    elif result < 0:
+        return "loss"
+    return "push"
 
 
-def generate():
+def grade_moneyline_bet(favored_side, home_score, away_score):
+    if home_score == away_score:
+        return "push"
+    winner = "home" if home_score > away_score else "away"
+    return "win" if winner == favored_side else "loss"
+
+
+def grade_bet(signal_type, favored_side, close_point, home_score, away_score):
+    if signal_type == "steam_total":
+        return grade_total_bet(favored_side, close_point, home_score, away_score)
+    if signal_type in ("steam_moneyline", "bullpen_fatigue"):
+        return grade_moneyline_bet(favored_side, home_score, away_score)
+    return grade_spread_bet(favored_side, close_point, home_score, away_score)
+
+
+def run_backtest(sport_key=None, min_strength=0.0):
     conn = get_connection()
-    n_games = conn.execute("SELECT COUNT(*) c FROM games").fetchone()["c"]
-    n_signals = conn.execute("SELECT COUNT(*) c FROM signals").fetchone()["c"]
+    query = """
+        SELECT s.*, r.home_score, r.away_score, g.sport as game_sport
+        FROM signals s
+        JOIN results r ON r.game_id = s.game_id AND r.completed = 1
+        JOIN games g ON g.game_id = s.game_id
+        WHERE s.strength >= ?
+    """
+    params = [min_strength]
+    if sport_key:
+        query += " AND g.sport = ?"
+        params.append(sport_key)
 
-    sport_counts = {}
-    for row in conn.execute("SELECT sport, COUNT(*) c FROM games GROUP BY sport"):
-        sport_counts[row["sport"]] = row["c"]
-
-    timeline = []
-    for row in conn.execute(
-        "SELECT date(computed_at) d, COUNT(*) c FROM signals GROUP BY date(computed_at) ORDER BY d"
-    ):
-        timeline.append({"date": row["d"], "count": row["c"]})
-
-    todays_plays_html = build_todays_plays_html(conn)
-    track_record_html = build_track_record_html(conn)
-
+    rows = conn.execute(query, params).fetchall()
     conn.close()
 
-    backtest_rows = run_backtest()
+    buckets = {}
+    for r in rows:
+        if r["signal_type"] not in ("steam_spread", "steam_total", "steam_moneyline", "reverse_line_movement", "bullpen_fatigue"):
+            continue
+        if r["signal_type"] != "bullpen_fatigue" and r["close_point"] is None:
+            continue
+        key = (r["game_sport"], r["signal_type"])
+        buckets.setdefault(key, []).append(r)
 
-    html = TEMPLATE.format(
-        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        n_games=n_games,
-        n_signals=n_signals,
-        todays_plays_html=todays_plays_html,
-        track_record_html=track_record_html,
-        backtest_table=build_backtest_table_html(backtest_rows),
-        backtest_json=json.dumps(backtest_rows),
-        sport_counts_json=json.dumps(sport_counts),
-        timeline_json=json.dumps(timeline),
-    )
+    results_summary = []
+    for (sport, sig_type), games in buckets.items():
+        wins = losses = pushes = 0
+        total_profit = 0.0
+        for g in games:
+            outcome = grade_bet(g["signal_type"], g["favored_side"], g["close_point"], g["home_score"], g["away_score"])
+            if outcome == "win":
+                wins += 1
+                real_price = g["odds_price"] if "odds_price" in g.keys() else None
+                if real_price:
+                    total_profit += american_to_profit(100, decimal_to_american(real_price))
+                else:
+                    total_profit += american_to_profit(100, STANDARD_JUICE)
+            elif outcome == "loss":
+                losses += 1
+                total_profit -= 100
+            else:
+                pushes += 1
 
-    out_path = "data/dashboard.html"
-    with open(out_path, "w") as f:
-        f.write(html)
-    print(f"Dashboard written to {out_path}")
-    return out_path
+        n_decided = wins + losses
+        win_pct = wins / n_decided if n_decided else 0.0
+        low, high = wilson_interval(wins, n_decided)
+        roi_pct = (total_profit / (n_decided * 100)) * 100 if n_decided else 0.0
+
+        results_summary.append({
+            "sport": sport, "signal_type": sig_type, "n": n_decided,
+            "wins": wins, "losses": losses, "pushes": pushes,
+            "win_pct": round(win_pct * 100, 1),
+            "ci_low": round(low * 100, 1), "ci_high": round(high * 100, 1),
+            "roi_pct": round(roi_pct, 1),
+        })
+
+    results_summary.sort(key=lambda x: (-x["n"]))
+    return results_summary
+
+
+def print_report(rows):
+    if not rows:
+        print("No completed, graded signals yet. Run ingest + signals first, and give it time to accumulate.")
+        return
+    print(f"\n{'Sport':<8}{'Signal':<22}{'N':>6}{'Win%':>8}{'95% CI':>16}{'ROI%':>9}")
+    print("-" * 70)
+    for r in rows:
+        ci = f"{r['ci_low']}-{r['ci_high']}"
+        flag = "  <- small sample, don't trust yet" if r["n"] < 30 else (
+               "  <- decent, keep watching" if r["n"] < 100 else "")
+        print(f"{r['sport']:<8}{r['signal_type']:<22}{r['n']:>6}{r['win_pct']:>7.1f}%{ci:>16}{r['roi_pct']:>8.1f}%{flag}")
+    print()
+    print("Reading this: break-even at -110 is 52.4% win rate. Anything with a 95% CI")
+    print("that stays above 52.4% at n>=100 is worth taking seriously. Below n=30, this")
+    print("is not signal yet — it's noise with a shape.")
+
+
+def export_csv(rows, path="data/backtest_report.csv"):
+    if not rows:
+        return
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Exported to {path}")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sport", default=None)
+    parser.add_argument("--min-strength", type=float, default=0.0)
+    args = parser.parse_args()
+
     init_db()
-    generate()
+    report = run_backtest(args.sport, args.min_strength)
+    print_report(report)
+    export_csv(report)
