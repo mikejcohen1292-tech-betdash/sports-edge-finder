@@ -21,12 +21,6 @@ from db import get_connection, init_db
 
 
 def suggest_units(strength):
-    """A standard handicapping convention (a '1-star/2-star/3-star' system,
-    essentially) — NOT a scientifically optimized bet size. It scales how
-    much to risk with how strong the signal was, so a play the system is
-    more confident in gets more weight than a borderline one. Once enough
-    graded games exist to know a signal type's real edge, this is the first
-    thing worth replacing with a properly data-driven size (e.g. Kelly)."""
     if strength >= 0.9:
         return 3
     elif strength >= 0.75:
@@ -70,9 +64,15 @@ def get_todays_qualifying_signals(sport_key=None, min_strength=None):
 
 
 def log_recommendations(rows):
+    """Writes each qualifying signal into the recommendations table, once per
+    game+signal_type. Safe to re-run the same morning — won't double-log.
+    If a recommendation already exists but is missing its price (e.g. it was
+    logged before odds data was available yet that morning), backfills the
+    price on the existing row instead of silently doing nothing."""
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
     logged = 0
+    updated = 0
     for r in rows:
         try:
             conn.execute(
@@ -85,9 +85,17 @@ def log_recommendations(rows):
             )
             logged += 1
         except Exception:
-            pass
+            if r["odds_price"]:
+                cur = conn.execute(
+                    "UPDATE recommendations SET odds_price = ? WHERE game_id = ? AND signal_type = ? AND odds_price IS NULL",
+                    (r["odds_price"], r["game_id"], r["signal_type"]),
+                )
+                if cur.rowcount:
+                    updated += 1
     conn.commit()
     conn.close()
+    if updated:
+        print(f"(Also backfilled odds_price on {updated} existing recommendation(s).)")
     return logged
 
 
