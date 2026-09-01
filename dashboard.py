@@ -129,6 +129,24 @@ def build_backtest_table_html(rows):
             f"</tr></thead><tbody>{trs}</tbody></table>")
 
 
+def _american_odds_str(decimal_price):
+    if not decimal_price:
+        return "—"
+    if decimal_price >= 2.0:
+        american = (decimal_price - 1) * 100
+    else:
+        american = -100 / (decimal_price - 1)
+    return f"{american:+.0f}"
+
+
+def _suggest_units(strength):
+    if strength >= 0.9:
+        return 3
+    elif strength >= 0.75:
+        return 2
+    return 1
+
+
 def build_todays_plays_html(conn):
     today = datetime.now(timezone.utc).date().isoformat()
     rows = conn.execute(
@@ -146,13 +164,17 @@ def build_todays_plays_html(conn):
     for r in rows:
         badge_cls = "badge-home" if r["favored_side"] == "home" else "badge-away"
         matchup = f"{r['away_team']} @ {r['home_team']}"
+        odds_str = _american_odds_str(r["odds_price"]) if "odds_price" in r.keys() else "—"
+        units = _suggest_units(r["strength"])
         trs += (f"<tr><td>{r['sport']}</td><td>{matchup}</td><td>{r['signal_type']}</td>"
                 f"<td><span class='badge {badge_cls}'>{r['favored_side'].upper()}</span></td>"
-                f"<td>{r['strength']:.2f}</td></tr>")
+                f"<td>{odds_str}</td><td>{units}u</td><td>{r['strength']:.2f}</td></tr>")
     return (f"<table><thead><tr><th>Sport</th><th>Matchup</th><th>Signal</th><th>Take</th>"
-            f"<th>Strength</th></tr></thead><tbody>{trs}</tbody></table>"
-            f"<div class='subtitle' style='margin-top:10px;'>Strength is relative confidence within the "
-            f"signal, not a win probability. Check the track record below before sizing anything.</div>")
+            f"<th>Odds</th><th>Units</th><th>Strength</th></tr></thead><tbody>{trs}</tbody></table>"
+            f"<div class='subtitle' style='margin-top:10px;'>Odds shown are the actual moneyline price — "
+            f"a heavy favorite and a live underdog are not the same bet even at equal strength. Units are a "
+            f"standard confidence-weighted sizing convention (1-3u), not a proven-optimal size. Check the "
+            f"track record below before sizing anything for real.</div>")
 
 
 def build_track_record_html(conn):
@@ -172,12 +194,14 @@ def build_track_record_html(conn):
     recent_trs = ""
     for r in recent:
         oc = r["outcome"] or "pending"
-        recent_trs += f"<tr><td>{r['recommended_at'][:10]}</td><td>{r['sport']}</td><td>{r['signal_type']}</td><td class='{oc}'>{oc}</td></tr>"
+        odds_str = _american_odds_str(r["odds_price"]) if "odds_price" in r.keys() else "—"
+        recent_trs += (f"<tr><td>{r['recommended_at'][:10]}</td><td>{r['sport']}</td>"
+                        f"<td>{r['signal_type']}</td><td>{odds_str}</td><td class='{oc}'>{oc}</td></tr>")
 
     return (f"<div style='font-size:28px;font-weight:700;' class='{cls}'>{win_pct:.1f}% "
             f"<span style='font-size:14px;color:#9099a8;font-weight:400;'>({wins}-{losses}-{pushes} on {n} decided plays)</span></div>"
             f"{note}<div style='margin-top:16px;'><table><thead><tr><th>Date</th><th>Sport</th>"
-            f"<th>Signal</th><th>Result</th></tr></thead><tbody>{recent_trs}</tbody></table></div>")
+            f"<th>Signal</th><th>Odds</th><th>Result</th></tr></thead><tbody>{recent_trs}</tbody></table></div>")
 
 
 def generate():
