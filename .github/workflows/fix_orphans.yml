@@ -19,20 +19,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Purge stale pre-switchover odds data
-        run: python purge_stale_odds.py
-
-      - name: Pull fresh odds from The Odds API
-        env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: |
-          python ingest_odds_theoddsapi.py --sport mlb
-          python ingest_odds_theoddsapi.py --sport wnba
-          python ingest_odds_theoddsapi.py --sport nfl
-          python ingest_odds_theoddsapi.py --sport ncaaf
-
-      - name: Compute fresh signals from clean data
-        run: python signals.py
+      - name: Remove specific confirmed-stale signals from the contamination window
+        run: python purge_specific_stale_signals.py
 
       - name: Reconcile orphaned games
         run: python fix_orphan_games.py
