@@ -23,6 +23,8 @@ jobs:
 
       - name: Fetch market catalog if not already present (one-time, cheap)
         continue-on-error: true
+        env:
+          ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
         run: python fetch_market_catalog.py
 
       - name: Pull today's results (safe to re-run, skips duplicates)
