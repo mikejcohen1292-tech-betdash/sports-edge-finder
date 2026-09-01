@@ -89,6 +89,17 @@ CREATE TABLE IF NOT EXISTS bullpen_usage (
     UNIQUE(team, game_date)
 );
 
+CREATE TABLE IF NOT EXISTS market_catalog (
+    market_id       INTEGER PRIMARY KEY,
+    sport_id        INTEGER NOT NULL,
+    market_name     TEXT,
+    market_type     TEXT,
+    handicap        REAL,
+    period          TEXT,
+    player_prop     INTEGER,
+    fetched_at      TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_odds_game ON odds_snapshots(game_id);
 CREATE INDEX IF NOT EXISTS idx_signals_game ON signals(game_id);
 CREATE INDEX IF NOT EXISTS idx_games_sport_time ON games(sport, commence_time);
@@ -96,9 +107,6 @@ CREATE INDEX IF NOT EXISTS idx_recs_graded ON recommendations(graded);
 """
 
 
-# Columns added after the tables already existed in the live database.
-# ALTER TABLE has no "IF NOT EXISTS" for columns, so these are applied inside
-# a try/except that quietly skips a column that's already there.
 MIGRATIONS = [
     "ALTER TABLE signals ADD COLUMN odds_price REAL",
     "ALTER TABLE recommendations ADD COLUMN odds_price REAL",
