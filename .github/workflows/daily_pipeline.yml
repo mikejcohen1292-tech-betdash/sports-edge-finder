@@ -21,6 +21,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Fetch market catalog if not already present (one-time, cheap)
+        continue-on-error: true
+        run: python fetch_market_catalog.py
+
       - name: Pull today's results (safe to re-run, skips duplicates)
         continue-on-error: true
         run: |
