@@ -7,8 +7,9 @@ recorded so far has been swapped.
 This script:
   1. Swaps home_price/away_price (and home_point/away_point) on every
      existing odds_snapshots row, so the data at rest is correct.
-  2. Wipes signals and recommendations, since they were computed from the
-     swapped data and can't be trusted.
+  2. Wipes recommendations, then signals (in that order — recommendations
+     references signals via a foreign key), since they were computed from
+     the swapped data and can't be trusted.
 
 After this runs, re-run signals.py to regenerate everything correctly.
 
@@ -36,8 +37,8 @@ def run():
     n_signals = conn.execute("SELECT COUNT(*) c FROM signals").fetchone()["c"]
     n_recs = conn.execute("SELECT COUNT(*) c FROM recommendations").fetchone()["c"]
     print(f"Clearing {n_signals} signals and {n_recs} recommendations computed from the bad data...")
-    conn.execute("DELETE FROM signals")
     conn.execute("DELETE FROM recommendations")
+    conn.execute("DELETE FROM signals")
     conn.commit()
 
     conn.close()
