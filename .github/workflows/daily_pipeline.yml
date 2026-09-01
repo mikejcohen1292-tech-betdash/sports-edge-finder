@@ -21,12 +21,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Fetch market catalog if not already present (one-time, cheap)
-        continue-on-error: true
-        env:
-          ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
-        run: python fetch_market_catalog.py
-
       - name: Pull today's results (safe to re-run, skips duplicates)
         continue-on-error: true
         run: |
@@ -48,15 +42,15 @@ jobs:
         continue-on-error: true
         run: python ingest_bullpen_usage.py
 
-      - name: Pull today's odds
+      - name: Pull today's odds (The Odds API)
         continue-on-error: true
         env:
-          ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
-          python ingest_odds_oddspapi.py --sport mlb
-          python ingest_odds_oddspapi.py --sport wnba
-          python ingest_odds_oddspapi.py --sport nfl
-          python ingest_odds_oddspapi.py --sport ncaaf
+          python ingest_odds_theoddsapi.py --sport mlb
+          python ingest_odds_theoddsapi.py --sport wnba
+          python ingest_odds_theoddsapi.py --sport nfl
+          python ingest_odds_theoddsapi.py --sport ncaaf
 
       - name: Compute signals
         continue-on-error: true
