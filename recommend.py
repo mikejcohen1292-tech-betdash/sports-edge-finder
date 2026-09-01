@@ -1,7 +1,9 @@
 """
 The morning play list. Pulls today's signals, checks them against your
 validated threshold, LOGS each qualifying game as an official recommendation
-(so it can be tracked and graded later), and prints them.
+(so it can be tracked and graded later), and prints them — including the
+real moneyline price and a suggested unit size, so a heavy favorite and a
+live underdog don't look like the same bet.
 
 This is meant to run once per morning, after ingest_odds_oddspapi.py has
 pulled today's lines and signals.py has scored them.
@@ -16,6 +18,30 @@ from datetime import datetime, timezone
 
 from config import SPORTS, MIN_SIGNAL_STRENGTH_TO_RECOMMEND
 from db import get_connection, init_db
+
+
+def suggest_units(strength):
+    """A standard handicapping convention (a '1-star/2-star/3-star' system,
+    essentially) — NOT a scientifically optimized bet size. It scales how
+    much to risk with how strong the signal was, so a play the system is
+    more confident in gets more weight than a borderline one. Once enough
+    graded games exist to know a signal type's real edge, this is the first
+    thing worth replacing with a properly data-driven size (e.g. Kelly)."""
+    if strength >= 0.9:
+        return 3
+    elif strength >= 0.75:
+        return 2
+    return 1
+
+
+def american_odds_str(decimal_price):
+    if not decimal_price:
+        return "N/A"
+    if decimal_price >= 2.0:
+        american = (decimal_price - 1) * 100
+    else:
+        american = -100 / (decimal_price - 1)
+    return f"{american:+.0f}"
 
 
 def get_todays_qualifying_signals(sport_key=None, min_strength=None):
@@ -44,8 +70,6 @@ def get_todays_qualifying_signals(sport_key=None, min_strength=None):
 
 
 def log_recommendations(rows):
-    """Writes each qualifying signal into the recommendations table, once per
-    game+signal_type. Safe to re-run the same morning — won't double-log."""
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
     logged = 0
@@ -54,14 +78,14 @@ def log_recommendations(rows):
             conn.execute(
                 """INSERT INTO recommendations
                    (game_id, sport, signal_id, signal_type, favored_side, strength,
-                    close_point, recommended_at, graded, outcome)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)""",
+                    close_point, recommended_at, graded, outcome, odds_price)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)""",
                 (r["game_id"], r["game_sport"], r["id"], r["signal_type"],
-                 r["favored_side"], r["strength"], r["close_point"], now),
+                 r["favored_side"], r["strength"], r["close_point"], now, r["odds_price"]),
             )
             logged += 1
         except Exception:
-            pass  # already logged today (UNIQUE constraint) — that's fine
+            pass
     conn.commit()
     conn.close()
     return logged
@@ -73,14 +97,18 @@ def print_recommendations(rows):
         print("days — the system isn't supposed to manufacture a play when there isn't one.")
         return
 
-    print(f"\n{'Sport':<7}{'Matchup':<38}{'Signal':<22}{'Side':<6}{'Strength':>9}")
-    print("-" * 84)
+    print(f"\n{'Sport':<7}{'Matchup':<38}{'Signal':<22}{'Side':<6}{'Odds':>7}{'Units':>7}{'Strength':>9}")
+    print("-" * 100)
     for r in rows:
         matchup = f"{r['away_team']} @ {r['home_team']}"
-        print(f"{r['game_sport']:<7}{matchup:<38}{r['signal_type']:<22}{r['favored_side']:<6}{r['strength']:>9.2f}")
+        odds_str = american_odds_str(r["odds_price"])
+        units = suggest_units(r["strength"])
+        print(f"{r['game_sport']:<7}{matchup:<38}{r['signal_type']:<22}{r['favored_side']:<6}"
+              f"{odds_str:>7}{units:>6}u{r['strength']:>9.2f}")
     print()
     print("Strength is relative confidence within the signal, not a win probability.")
-    print("Cross-check against backtest.py's win% for this signal type before betting size.")
+    print("Units are a standard confidence-weighted sizing convention, not a proven-optimal size —")
+    print("treat as a starting point, and cross-check backtest.py's win% before sizing anything.")
 
 
 if __name__ == "__main__":
