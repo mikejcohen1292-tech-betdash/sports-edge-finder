@@ -67,6 +67,9 @@ def fetch_fixtures(sport_cfg, league_key, session, days_ahead=1):
         params={**_key_param(), "sportId": sport_id, "from": date_from, "to": date_to},
         timeout=15,
     )
+    if resp.status_code == 404:
+        print(f"  [warning] fixtures endpoint 404'd for sportId={sport_id}, treating as no fixtures today.")
+        return []
     resp.raise_for_status()
     all_fixtures = resp.json()
     if isinstance(all_fixtures, dict):
@@ -121,12 +124,6 @@ def _classify_market(a_point, b_point):
 def _parse_and_store_snapshot(sport_key, fixture, odds_payload):
     """
     Normalizes OddsPapi's response into our odds_snapshots rows.
-
-    OddsPapi nests odds under bookmakerOdds -> {book} -> markets -> {numeric
-    market id} -> outcomes -> {numeric outcome id} -> players -> "0" -> price.
-    We classify each market as spread/total/moneyline by its price SHAPE
-    (see _classify_market) rather than trusting the numeric market ID, since
-    that ID scheme isn't documented per-sport and would just be a guess.
     """
     game_id = f"{sport_key}_{fixture['fixtureId']}"
     captured_at = datetime.now(timezone.utc).isoformat()
@@ -206,11 +203,6 @@ def run_daily_snapshot(sport_key):
 
 
 def run_historical_backfill(sport_key, max_fixtures=None):
-    """
-    Pulls whatever free historical odds OddsPapi has archived. Coverage depends
-    on when their archive started, not on your season needs — check what comes
-    back before assuming it's complete.
-    """
     sport_cfg = SPORTS[sport_key]
     session = requests.Session()
     fixtures = fetch_fixtures(sport_cfg, sport_key, session, days_ahead=1)
@@ -242,10 +234,13 @@ def main():
     args = parser.parse_args()
 
     init_db()
-    if args.backfill_days:
-        run_historical_backfill(args.sport)
-    else:
-        run_daily_snapshot(args.sport)
+    try:
+        if args.backfill_days:
+            run_historical_backfill(args.sport)
+        else:
+            run_daily_snapshot(args.sport)
+    except Exception as e:
+        print(f"  [ERROR] {args.sport} odds ingestion failed, skipping for today: {e}")
 
 
 if __name__ == "__main__":
