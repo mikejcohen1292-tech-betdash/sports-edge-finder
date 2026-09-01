@@ -33,6 +33,21 @@ def _parse(ts):
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
+def _latest_price_any_book(game_id, market, side, conn):
+    """Fallback when the primary (PREFERRED_BOOK) price lookup comes back
+    empty for some reason — grabs the most recent real price for that side
+    from ANY book, so the displayed odds are never silently blank when real
+    data exists somewhere in the table."""
+    row = conn.execute(
+        """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = ?
+           ORDER BY captured_at DESC LIMIT 1""",
+        (game_id, market),
+    ).fetchone()
+    if not row:
+        return None
+    return row["home_price"] if side == "home" else row["away_price"]
+
+
 def compute_spread_steam(game_id, conn):
     """Tracks ONE consistent book's spread over time (see PREFERRED_BOOK) so
     open-vs-close is a real price move, not a comparison across bookmakers."""
@@ -55,6 +70,8 @@ def compute_spread_steam(game_id, conn):
         favored_side = "home" if move < 0 else "away"
         strength = min(1.0, abs(move) / (STEAM_MOVE_SPREAD_POINTS * 3))
         odds_price = close_row["home_price"] if favored_side == "home" else close_row["away_price"]
+        if odds_price is None:
+            odds_price = _latest_price_any_book(game_id, "spread", favored_side, conn)
         return [{
             "signal_type": "steam_spread",
             "favored_side": favored_side,
@@ -88,6 +105,8 @@ def compute_totals_steam(game_id, conn):
         favored_side = "over" if move > 0 else "under"
         strength = min(1.0, abs(move) / (STEAM_MOVE_SPREAD_POINTS * 3))
         odds_price = close_row["home_price"] if favored_side == "over" else close_row["away_price"]
+        if odds_price is None:
+            odds_price = _latest_price_any_book(game_id, "total", "home" if favored_side == "over" else "away", conn)
         return [{
             "signal_type": "steam_total",
             "favored_side": favored_side,
@@ -101,9 +120,7 @@ def compute_totals_steam(game_id, conn):
 
 def compute_moneyline_steam(game_id, conn):
     """Steam detection on moneyline prices, using implied probability shift
-    (1/decimal_price) rather than raw price, since a 1.50->1.40 move means
-    something different at different starting prices. Tracks ONE consistent
-    book (see PREFERRED_BOOK)."""
+    (1/decimal_price) rather than raw price. Tracks ONE consistent book."""
     rows = conn.execute(
         """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'moneyline' AND book = ?
            ORDER BY captured_at ASC""",
@@ -138,10 +155,6 @@ def compute_moneyline_steam(game_id, conn):
 
 
 def _latest_moneyline_price(game_id, side, conn):
-    """Looks up the most recent moneyline price for a side, from the single
-    reliable book (see PREFERRED_BOOK), so the recommendation can show real
-    risk (e.g. -300 favorite vs +150 dog) instead of treating every play as
-    if it paid the same."""
     row = conn.execute(
         """SELECT * FROM odds_snapshots WHERE game_id = ? AND market = 'moneyline' AND book = ?
            ORDER BY captured_at DESC LIMIT 1""",
@@ -153,10 +166,6 @@ def _latest_moneyline_price(game_id, side, conn):
 
 
 def compute_bullpen_fatigue_signal(game_id, conn):
-    """MLB only. Checks if either team leaned heavily on its bullpen in its
-    most recent game (yesterday, typically) — the trend you flagged. Only
-    fires when exactly one side was heavy and the other wasn't, favoring
-    the side that WASN'T fatigued."""
     game = conn.execute(
         "SELECT * FROM games WHERE game_id = ? AND sport = 'mlb'", (game_id,)
     ).fetchone()
@@ -200,9 +209,6 @@ def compute_bullpen_fatigue_signal(game_id, conn):
 
 
 def compute_rlm_signals(game_id, conn):
-    """Reverse line movement: the public backs one side, but the moneyline
-    price moves toward the OTHER side. Only fires if public_betting has rows
-    for this game."""
     betting_rows = conn.execute(
         "SELECT * FROM public_betting WHERE game_id = ? ORDER BY captured_at DESC",
         (game_id,),
