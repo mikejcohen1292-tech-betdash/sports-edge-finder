@@ -1,25 +1,20 @@
 """
-ONE-TIME REPAIR. Fixes games that were created before the ID-matching fix in
-ingest_odds_oddspapi.py — games that got a separate, OddsPapi-only ID instead
-of being matched to their real ESPN record, which meant results (and grading)
-could never attach to them. This finds those orphans, matches them to the
-correct ESPN game by team name + date, and re-points everything (odds,
-signals, recommendations) to the correct id.
+ONE-TIME REPAIR. Fixes games that got a separate, OddsPapi-only ID instead
+of being matched to their real ESPN record, which meant results (and
+grading) could never attach to them. Searches your OWN already-stored games
+table for the matching ESPN-sourced record (no live network calls, no
+re-fetching — the correct data is already sitting in your database) and
+re-points everything (odds, signals, recommendations) to the correct id.
 
-Safe to run more than once — already-fixed games are simply skipped the
-second time.
+Safe to run more than once — already-fixed games are simply skipped.
 
 Usage:
     python fix_orphan_games.py
 """
 
 import re
-from datetime import datetime
-
-import requests
 
 from db import get_connection, init_db
-from ingest_results_espn import fetch_day, SPORTS
 
 
 def looks_like_oddspapi_id(game_id):
@@ -35,33 +30,22 @@ def reconcile():
     conn = get_connection()
     all_games = conn.execute("SELECT * FROM games").fetchall()
     orphans = [g for g in all_games if looks_like_oddspapi_id(g["game_id"])]
-    print(f"Found {len(orphans)} OddsPapi-only game(s) to check.")
+    espn_style = [g for g in all_games if not looks_like_oddspapi_id(g["game_id"])]
+    print(f"Found {len(orphans)} OddsPapi-only game(s) to check against "
+          f"{len(espn_style)} ESPN-sourced game(s) already in the database.")
 
-    session = requests.Session()
     fixed = 0
     for g in orphans:
-        sport_key = g["sport"]
         date_str = g["commence_time"][:10]
-        try:
-            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-        except ValueError:
-            continue
-
-        sport_cfg = SPORTS.get(sport_key)
-        if not sport_cfg:
-            continue
-
-        try:
-            espn_games, espn_results = fetch_day(sport_key, sport_cfg, date_obj, session)
-        except requests.RequestException as e:
-            print(f"  {g['game_id']}: ESPN fetch failed ({e})")
-            continue
 
         match = None
-        for eg in espn_games:
-            eid, esport, ehome, eaway, ecommence, eseason = eg
-            if ((names_match(g["home_team"], ehome) and names_match(g["away_team"], eaway)) or
-                    (names_match(g["home_team"], eaway) and names_match(g["away_team"], ehome))):
+        for eg in espn_style:
+            if eg["sport"] != g["sport"]:
+                continue
+            if eg["commence_time"][:10] != date_str:
+                continue
+            if ((names_match(g["home_team"], eg["home_team"]) and names_match(g["away_team"], eg["away_team"])) or
+                    (names_match(g["home_team"], eg["away_team"]) and names_match(g["away_team"], eg["home_team"]))):
                 match = eg
                 break
 
@@ -69,26 +53,9 @@ def reconcile():
             print(f"  {g['game_id']} ({g['away_team']} @ {g['home_team']}, {date_str}): no ESPN match found yet")
             continue
 
-        new_id = match[0]
+        new_id = match["game_id"]
         if new_id == g["game_id"]:
             continue
-
-        conn.execute(
-            """INSERT INTO games (game_id, sport, home_team, away_team, commence_time, season)
-               VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(game_id) DO NOTHING""",
-            match,
-        )
-        for r in espn_results:
-            if r[0] == new_id:
-                conn.execute(
-                    """INSERT INTO results (game_id, home_score, away_score, completed)
-                       VALUES (?, ?, ?, ?)
-                       ON CONFLICT(game_id) DO UPDATE SET
-                           home_score=excluded.home_score,
-                           away_score=excluded.away_score,
-                           completed=excluded.completed""",
-                    r,
-                )
 
         for table in ("odds_snapshots", "signals", "public_betting"):
             conn.execute(f"UPDATE {table} SET game_id = ? WHERE game_id = ?", (new_id, g["game_id"]))
