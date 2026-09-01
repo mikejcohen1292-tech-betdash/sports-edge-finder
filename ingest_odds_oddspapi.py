@@ -1,9 +1,14 @@
 """
-Pulls odds (moneyline + spread) from OddsPapi and stores snapshots.
+Pulls odds (moneyline) from OddsPapi and stores snapshots.
 
 IMPORTANT — free tier reality: OddsPapi's free key is capped around 250
-requests/month. That's not enough to poll continuously across 4 sports, so
-this script defaults to ONE efficient snapshot per sport per run.
+requests/month. This script defaults to ONE efficient snapshot per sport per
+run.
+
+Only stores the specific market ID identified as the real full-game
+moneyline (via fetch_market_catalog.py's catalog) — not every
+similarly-shaped market, which was mixing first-5-innings, alternate lines,
+and player props together.
 
 Usage:
     python ingest_odds_oddspapi.py --sport mlb
@@ -99,16 +104,6 @@ def fetch_historical_odds_for_fixture(fixture_id, session):
     return resp.json()
 
 
-def _classify_market(a_point, b_point):
-    if a_point is None or b_point is None:
-        return "moneyline"
-    if abs(a_point + b_point) < 0.15:
-        return "spread"
-    if abs(a_point - b_point) < 0.15:
-        return "total"
-    return "unknown"
-
-
 def resolve_game_id(conn, sport_key, home_name, away_name, start_time_iso):
     if not start_time_iso:
         return None
@@ -129,11 +124,56 @@ def resolve_game_id(conn, sport_key, home_name, away_name, start_time_iso):
     return None
 
 
+EXCLUDE_PERIOD_SUBSTRINGS = [
+    "1st5", "first5", "5inning", "half", "quarter", "period",
+    "1sthalf", "2ndhalf", "1st", "2nd", "3rd", "4th", "set", "leg",
+]
+
+_MAIN_ML_CACHE = {}
+
+
+def _main_moneyline_market_id(sport_id, conn):
+    """The one specific market ID (from OddsPapi's own catalog, fetched by
+    fetch_market_catalog.py) that represents the real full-game moneyline —
+    not a first-5-innings or other sub-market that happens to look the same.
+    Returns None if the catalog hasn't been fetched yet for this sport."""
+    if sport_id in _MAIN_ML_CACHE:
+        return _MAIN_ML_CACHE[sport_id]
+
+    rows = conn.execute(
+        "SELECT * FROM market_catalog WHERE sport_id = ? AND player_prop = 0", (sport_id,)
+    ).fetchall()
+    candidates = []
+    for r in rows:
+        market_type = (r["market_type"] or "").lower()
+        market_name = (r["market_name"] or "").lower()
+        period = (r["period"] or "").lower()
+        if market_type not in ("moneyline", "1x2", "h2h"):
+            continue
+        if r["handicap"] not in (0, 0.0, None):
+            continue
+        if any(sub in period for sub in EXCLUDE_PERIOD_SUBSTRINGS):
+            continue
+        if any(sub in market_name for sub in EXCLUDE_PERIOD_SUBSTRINGS):
+            continue
+        candidates.append(r)
+
+    if not candidates:
+        _MAIN_ML_CACHE[sport_id] = None
+        return None
+    candidates.sort(key=lambda r: len(r["market_name"] or ""))
+    result = candidates[0]["market_id"]
+    _MAIN_ML_CACHE[sport_id] = result
+    return result
+
+
 def _parse_and_store_snapshot(sport_key, fixture, odds_payload, conn):
+    """
+    Only stores the ONE market ID identified as the real full-game moneyline
+    (see _main_moneyline_market_id) — not every similarly-shaped market.
+    """
     # CONFIRMED via cross-checking real sportsbook odds: OddsPapi lists the
-    # visiting team first. participant1 = AWAY, participant2 = HOME — the
-    # opposite of what this code originally assumed, which silently swapped
-    # every home/away price this ingestion ever recorded.
+    # visiting team first. participant1 = AWAY, participant2 = HOME.
     fixture_away = fixture.get("participant1Name", "Away")
     fixture_home = fixture.get("participant2Name", "Home")
     start_time = fixture.get("startTime")
@@ -147,32 +187,39 @@ def _parse_and_store_snapshot(sport_key, fixture, odds_payload, conn):
         start_time, str(datetime.now().year),
     )]
 
+    sport_id = SPORT_ID_MAP.get(SPORTS[sport_key]["oddspapi_sport"])
+    main_ml_id = _main_moneyline_market_id(sport_id, conn) if sport_id else None
+
     rows_odds = []
+    if main_ml_id is None:
+        # Catalog not fetched yet for this sport — don't fall back to the old
+        # guess-by-shape heuristic. Run fetch_market_catalog.py first.
+        return rows_games, rows_odds
+
     bookmaker_odds = odds_payload.get("bookmakerOdds", {})
     for book_name, book_data in bookmaker_odds.items():
         markets = book_data.get("markets", {})
-        for market_id, market in markets.items():
-            outcomes = market.get("outcomes", {})
-            outcome_list = list(outcomes.items())
-            if len(outcome_list) < 2:
-                continue
+        market = markets.get(str(main_ml_id))
+        if not market:
+            continue
 
-            def _price(o):
-                players = o[1].get("players", {})
-                p0 = players.get("0", {})
-                return p0.get("price"), p0.get("line") or p0.get("point")
+        outcomes = market.get("outcomes", {})
+        outcome_list = list(outcomes.items())
+        if len(outcome_list) < 2:
+            continue
 
-            # outcome index 0 = participant1 = AWAY, index 1 = participant2 = HOME
-            (away_price, away_point) = _price(outcome_list[0])
-            (home_price, home_point) = _price(outcome_list[1])
-            market_label = _classify_market(home_point, away_point)
-            if market_label == "unknown":
-                continue
+        def _price(o):
+            players = o[1].get("players", {})
+            p0 = players.get("0", {})
+            return p0.get("price"), p0.get("line") or p0.get("point")
 
-            rows_odds.append((
-                game_id, book_name, captured_at, market_label,
-                home_price, away_price, home_point, away_point,
-            ))
+        (away_price, away_point) = _price(outcome_list[0])
+        (home_price, home_point) = _price(outcome_list[1])
+
+        rows_odds.append((
+            game_id, book_name, captured_at, "moneyline",
+            home_price, away_price, home_point, away_point,
+        ))
     return rows_games, rows_odds
 
 
