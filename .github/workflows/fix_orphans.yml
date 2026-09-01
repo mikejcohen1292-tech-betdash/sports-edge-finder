@@ -22,6 +22,9 @@ jobs:
       - name: Reconcile orphaned games
         run: python fix_orphan_games.py
 
+      - name: Backfill missing recommendation odds
+        run: python backfill_recommendation_odds.py
+
       - name: Re-grade recommendations now that IDs are fixed
         run: python grade_recommendations.py
 
