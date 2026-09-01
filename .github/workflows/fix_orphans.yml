@@ -19,6 +19,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Fix home/away swap and reset signals
+        run: |
+          python fix_home_away_swap.py
+          python signals.py
+
       - name: Reconcile orphaned games
         run: python fix_orphan_games.py
 
