@@ -134,7 +134,12 @@ def run(sport_key):
     conn = get_connection()
 
     matched = 0
+    skipped_bad_pair = 0
     for team_a, team_b in games:
+        if team_a["team"].strip().lower() == team_b["team"].strip().lower():
+            skipped_bad_pair += 1
+            continue
+
         game_id, home_is_a = match_game(sport_key, team_a["team"], team_b["team"], conn)
         if game_id is None:
             continue
@@ -144,12 +149,18 @@ def run(sport_key):
         if a_bet is None or b_bet is None:
             continue
 
+        if not (90 <= (a_bet + b_bet) <= 110):
+            skipped_bad_pair += 1
+            continue
+
         home_bet, home_handle = (a_bet, a_handle) if home_is_a else (b_bet, b_handle)
         away_bet, away_handle = (b_bet, b_handle) if home_is_a else (a_bet, a_handle)
         store_public_betting(game_id, home_bet, home_handle, away_bet, away_handle)
         matched += 1
 
     conn.close()
+    if skipped_bad_pair:
+        print(f"  [warning] skipped {skipped_bad_pair} row-pair(s) that looked misaligned (self-matched team or bad percentage sum).")
     print(f"{sport_key}: {len(games)} games parsed, {matched} matched to known games "
           f"(real DraftKings handle%/bet%, not a proxy).")
 
