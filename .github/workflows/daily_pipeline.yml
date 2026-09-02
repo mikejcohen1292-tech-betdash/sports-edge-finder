@@ -52,6 +52,14 @@ jobs:
           python ingest_odds_theoddsapi.py --sport nfl
           python ingest_odds_theoddsapi.py --sport ncaaf
 
+      - name: Pull public betting data (VSiN, real DraftKings handle%/bet%, free)
+        continue-on-error: true
+        run: |
+          python ingest_public_betting_vsin.py --sport mlb
+          python ingest_public_betting_vsin.py --sport wnba
+          python ingest_public_betting_vsin.py --sport nfl
+          python ingest_public_betting_vsin.py --sport ncaaf
+
       - name: Compute signals
         continue-on-error: true
         run: python signals.py
