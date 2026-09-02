@@ -157,12 +157,12 @@ def _suggest_units(strength):
 def build_todays_plays_html(conn):
     today = eastern_today()
     rows = conn.execute(
-        """SELECT rec.*, g.home_team, g.away_team
+        """SELECT rec.*, g.home_team, g.away_team, g.commence_time
            FROM recommendations rec
            JOIN games g ON g.game_id = rec.game_id
            ORDER BY rec.strength DESC"""
     ).fetchall()
-    rows = [r for r in rows if to_eastern_date(r["recommended_at"]) == today]
+    rows = [r for r in rows if to_eastern_date(r["commence_time"]) == today]
     if not rows:
         return ('<div class="empty">No games clear the bar today - that is a valid, correct '
                 'result on plenty of days, not a broken system.</div>')
