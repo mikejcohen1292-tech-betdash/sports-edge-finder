@@ -1,24 +1,19 @@
 """
-ONE-TIME REPAIR. Fixes games that got a separate, OddsPapi-only ID instead
-of being matched to their real ESPN record, which meant results (and
-grading) could never attach to them. Searches your OWN already-stored games
-table for the matching ESPN-sourced record (no live network calls, no
-re-fetching — the correct data is already sitting in your database) and
-re-points everything (odds, signals, recommendations) to the correct id.
-
-Safe to run more than once — already-fixed games are simply skipped.
+ONE-TIME REPAIR. Fixes games that got a separate, fallback ID instead of
+being matched to their real ESPN record, which meant results (and grading)
+could never attach to them, and often caused the same real game to show up
+twice as "duplicate" recommendations.
 
 Usage:
     python fix_orphan_games.py
 """
 
-import re
-
 from db import get_connection, init_db
 
 
 def looks_like_oddspapi_id(game_id):
-    return bool(re.search(r"_id\d+$", game_id))
+    suffix = game_id.split("_", 1)[1] if "_" in game_id else game_id
+    return not suffix.isdigit()
 
 
 def names_match(a, b):
@@ -31,7 +26,7 @@ def reconcile():
     all_games = conn.execute("SELECT * FROM games").fetchall()
     orphans = [g for g in all_games if looks_like_oddspapi_id(g["game_id"])]
     espn_style = [g for g in all_games if not looks_like_oddspapi_id(g["game_id"])]
-    print(f"Found {len(orphans)} OddsPapi-only game(s) to check against "
+    print(f"Found {len(orphans)} orphan game(s) to check against "
           f"{len(espn_style)} ESPN-sourced game(s) already in the database.")
 
     fixed = 0
@@ -64,8 +59,9 @@ def reconcile():
         for rec in recs:
             try:
                 conn.execute("UPDATE recommendations SET game_id = ? WHERE id = ?", (new_id, rec["id"]))
-            except Exception as e:
-                print(f"    recommendation {rec['id']}: could not repoint ({e})")
+            except Exception:
+                conn.execute("DELETE FROM recommendations WHERE id = ?", (rec["id"],))
+                print(f"    recommendation {rec['id']}: duplicate of an existing pick, removed")
 
         conn.execute("DELETE FROM games WHERE game_id = ?", (g["game_id"],))
         conn.commit()
