@@ -29,24 +29,30 @@
 </head>
 <body>
 <h1>Sports Edge Finder</h1>
-<div class="subtitle">Generated 2026-09-01 20:49 · 5976 games tracked · 20 signals computed</div>
+<div class="subtitle">Generated 2026-09-02 01:58 - 5991 games tracked - 30 signals computed</div>
 
 <div class="card highlight" style="margin-bottom:20px;">
   <h2>Today's Recommended Plays</h2>
-  <table><thead><tr><th>Sport</th><th>Matchup</th><th>Signal</th><th>Take</th><th>Odds</th><th>Units</th><th>Strength</th></tr></thead><tbody><tr><td>mlb</td><td>Atlanta Braves @ Washington Nationals</td><td>bullpen_fatigue</td><td><span class='badge badge-away'>AWAY</span></td><td>-156</td><td>3u</td><td>1.00</td></tr><tr><td>mlb</td><td>Milwaukee Brewers @ Chicago Cubs</td><td>steam_spread</td><td><span class='badge badge-away'>AWAY</span></td><td>+156</td><td>3u</td><td>1.00</td></tr></tbody></table><div class='subtitle' style='margin-top:10px;'>Odds shown are the actual moneyline price — a heavy favorite and a live underdog are not the same bet even at equal strength. Units are a standard confidence-weighted sizing convention (1-3u), not a proven-optimal size. Check the track record below before sizing anything for real.</div>
+  <table><thead><tr><th>Sport</th><th>Matchup</th><th>Signal</th><th>Take</th><th>Odds</th><th>Units</th><th>Strength</th></tr></thead><tbody><tr><td>mlb</td><td>Toronto Blue Jays @ Cleveland Guardians</td><td>bullpen_fatigue</td><td><span class='badge badge-home'>HOME</span></td><td>+113</td><td>3u</td><td>1.00</td></tr><tr><td>mlb</td><td>Toronto Blue Jays @ Cleveland Guardians</td><td>bullpen_fatigue</td><td><span class='badge badge-home'>HOME</span></td><td>+109</td><td>3u</td><td>1.00</td></tr></tbody></table><div class='subtitle' style='margin-top:10px;'>Odds shown are the actual moneyline price - a heavy favorite and a live underdog are not the same bet even at equal strength. Units are a standard confidence-weighted sizing convention (1-3u), not a proven-optimal size. Check the track record below before sizing anything for real.</div>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+  <h2>Top 5 Public Consensus Plays Per Sport</h2>
+  <div class="subtitle" style="margin-bottom:12px;">Real DraftKings sportsbook betting data - where the public's money is heaviest today.</div>
+  <div class="empty">No public betting data for today's games yet - this updates once the daily pipeline runs.</div>
 </div>
 
 <div class="card" style="margin-bottom:32px;">
   <h2>Recommendation Track Record</h2>
-  <div class="subtitle" style="margin-bottom:12px;">Not the full backtest below — this is specifically what the
+  <div class="subtitle" style="margin-bottom:12px;">Not the full backtest below - this is specifically what the
   system actually told you to bet on past mornings, graded against what happened.</div>
-  <div class="empty">No graded recommendations yet — check back once today's (or past) plays have finished.</div>
+  <div class="empty">No graded recommendations yet - check back once today's (or past) plays have finished.</div>
 </div>
 
 <div class="grid">
   <div class="card">
     <h3>Signal performance (ATS, vs -110 breakeven of 52.4%)</h3>
-    <table><thead><tr><th>Sport</th><th>Signal</th><th>N</th><th>Win%</th><th>ROI%</th></tr></thead><tbody><tr><td>mlb</td><td>bullpen_fatigue</td><td>10</td><td class='loss'>40.0%</td><td>-23.6%<div class="small-sample">small sample</div></td></tr></tbody></table>
+    <table><thead><tr><th>Sport</th><th>Signal</th><th>N</th><th>Win%</th><th>ROI%</th></tr></thead><tbody><tr><td>mlb</td><td>bullpen_fatigue</td><td>21</td><td class='loss'>28.6%</td><td>-45.5%<div class="small-sample">small sample</div></td></tr></tbody></table>
   </div>
   <div class="card">
     <h3>Win % by signal type</h3>
@@ -63,9 +69,9 @@
 </div>
 
 <script>
-const backtestData = [{"sport": "mlb", "signal_type": "bullpen_fatigue", "n": 10, "wins": 4, "losses": 6, "pushes": 0, "win_pct": 40.0, "ci_low": 16.8, "ci_high": 68.7, "roi_pct": -23.6}];
-const sportCounts = {"mlb": 4913, "ncaaf": 147, "nfl": 272, "wnba": 644};
-const timeline = [{"date": "2026-09-01", "count": 20}];
+const backtestData = [{"sport": "mlb", "signal_type": "bullpen_fatigue", "n": 21, "wins": 6, "losses": 15, "pushes": 0, "win_pct": 28.6, "ci_low": 13.8, "ci_high": 50.0, "roi_pct": -45.5}];
+const sportCounts = {"mlb": 4928, "ncaaf": 147, "nfl": 272, "wnba": 644};
+const timeline = [{"date": "2026-09-01", "count": 20}, {"date": "2026-09-02", "count": 10}];
 
 new Chart(document.getElementById('winPctChart'), {
   type: 'bar',
