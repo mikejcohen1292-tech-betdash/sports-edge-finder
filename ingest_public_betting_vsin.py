@@ -153,6 +153,10 @@ def run(sport_key):
             skipped_bad_pair += 1
             continue
 
+        if a_bet in (0.0, 100.0) or b_bet in (0.0, 100.0):
+            skipped_bad_pair += 1
+            continue
+
         home_bet, home_handle = (a_bet, a_handle) if home_is_a else (b_bet, b_handle)
         away_bet, away_handle = (b_bet, b_handle) if home_is_a else (a_bet, a_handle)
         store_public_betting(game_id, home_bet, home_handle, away_bet, away_handle)
