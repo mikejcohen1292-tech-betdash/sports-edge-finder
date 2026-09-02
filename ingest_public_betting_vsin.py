@@ -1,6 +1,6 @@
 """
 Pulls REAL DraftKings sportsbook public betting data from VSiN
-(data.vsin.com) — actual money wagered (Handle %) and actual ticket count
+(data.vsin.com) - actual money wagered (Handle %) and actual ticket count
 (Bet %) on every game, not a pick'em-contest proxy. Confirmed free and
 accessible (no login, no paywall, no robots.txt block).
 
@@ -47,23 +47,20 @@ def fetch_splits_page(sport_key):
 
 
 def parse_splits_rows(html):
-    """Each real game is TWO consecutive team rows. A team row has exactly
-    10 cells: team, [spread, handle%, bet%], [total, handle%, bet%],
-    [moneyline, handle%, bet%]. Date-header rows have far fewer cells."""
     soup = BeautifulSoup(html, "html.parser")
     team_rows = []
     for tr in soup.find_all("tr"):
         cells = tr.find_all("td")
-        if len(cells) != 10:
+        if len(cells) != 11:
             continue
         texts = [c.get_text(strip=True) for c in cells]
-        team_name = texts[0]
+        team_name = texts[1]
         if not team_name:
             continue
         team_rows.append({
             "team": team_name,
-            "ml_handle_pct": texts[8],
-            "ml_bet_pct": texts[9],
+            "ml_handle_pct": texts[9],
+            "ml_bet_pct": texts[10],
         })
 
     games = []
