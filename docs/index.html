@@ -29,7 +29,7 @@
 </head>
 <body>
 <h1>Sports Edge Finder</h1>
-<div class="subtitle">Generated 2026-09-02 15:46 - 5981 games tracked - 211 signals computed</div>
+<div class="subtitle">Generated 2026-09-02 15:48 - 5981 games tracked - 242 signals computed</div>
 
 <div class="card highlight" style="margin-bottom:20px;">
   <h2>Today's Recommended Plays</h2>
@@ -52,7 +52,7 @@
 <div class="grid">
   <div class="card">
     <h3>Signal performance (ATS, vs -110 breakeven of 52.4%)</h3>
-    <table><thead><tr><th>Sport</th><th>Signal</th><th>N</th><th>Win%</th><th>ROI%</th></tr></thead><tbody><tr><td>mlb</td><td>bullpen_fatigue</td><td>108</td><td class='loss'>30.6%</td><td>-45.3%</td></tr><tr><td>mlb</td><td>steam_moneyline</td><td>2</td><td class='loss'>0.0%</td><td>-100.0%<div class="small-sample">small sample</div></td></tr><tr><td>mlb</td><td>reverse_line_movement</td><td>2</td><td class='loss'>0.0%</td><td>-100.0%<div class="small-sample">small sample</div></td></tr><tr><td>mlb</td><td>steam_spread</td><td>1</td><td class='win'>100.0%</td><td>156.0%<div class="small-sample">small sample</div></td></tr></tbody></table>
+    <table><thead><tr><th>Sport</th><th>Signal</th><th>N</th><th>Win%</th><th>ROI%</th></tr></thead><tbody><tr><td>mlb</td><td>bullpen_fatigue</td><td>120</td><td class='loss'>31.7%</td><td>-44.0%</td></tr><tr><td>mlb</td><td>reverse_line_movement</td><td>3</td><td class='loss'>0.0%</td><td>-100.0%<div class="small-sample">small sample</div></td></tr><tr><td>mlb</td><td>steam_moneyline</td><td>2</td><td class='loss'>0.0%</td><td>-100.0%<div class="small-sample">small sample</div></td></tr><tr><td>mlb</td><td>steam_spread</td><td>1</td><td class='win'>100.0%</td><td>156.0%<div class="small-sample">small sample</div></td></tr></tbody></table>
   </div>
   <div class="card">
     <h3>Win % by signal type</h3>
@@ -69,9 +69,9 @@
 </div>
 
 <script>
-const backtestData = [{"sport": "mlb", "signal_type": "bullpen_fatigue", "n": 108, "wins": 33, "losses": 75, "pushes": 0, "win_pct": 30.6, "ci_low": 22.7, "ci_high": 39.8, "roi_pct": -45.3}, {"sport": "mlb", "signal_type": "steam_moneyline", "n": 2, "wins": 0, "losses": 2, "pushes": 0, "win_pct": 0.0, "ci_low": 0, "ci_high": 65.8, "roi_pct": -100.0}, {"sport": "mlb", "signal_type": "reverse_line_movement", "n": 2, "wins": 0, "losses": 2, "pushes": 0, "win_pct": 0.0, "ci_low": 0, "ci_high": 65.8, "roi_pct": -100.0}, {"sport": "mlb", "signal_type": "steam_spread", "n": 1, "wins": 1, "losses": 0, "pushes": 0, "win_pct": 100.0, "ci_low": 20.7, "ci_high": 100, "roi_pct": 156.0}];
+const backtestData = [{"sport": "mlb", "signal_type": "bullpen_fatigue", "n": 120, "wins": 38, "losses": 82, "pushes": 0, "win_pct": 31.7, "ci_low": 24.0, "ci_high": 40.4, "roi_pct": -44.0}, {"sport": "mlb", "signal_type": "reverse_line_movement", "n": 3, "wins": 0, "losses": 3, "pushes": 0, "win_pct": 0.0, "ci_low": 0, "ci_high": 56.2, "roi_pct": -100.0}, {"sport": "mlb", "signal_type": "steam_moneyline", "n": 2, "wins": 0, "losses": 2, "pushes": 0, "win_pct": 0.0, "ci_low": 0, "ci_high": 65.8, "roi_pct": -100.0}, {"sport": "mlb", "signal_type": "steam_spread", "n": 1, "wins": 1, "losses": 0, "pushes": 0, "win_pct": 100.0, "ci_low": 20.7, "ci_high": 100, "roi_pct": 156.0}];
 const sportCounts = {"mlb": 4918, "ncaaf": 147, "nfl": 272, "wnba": 644};
-const timeline = [{"date": "2026-09-01", "count": 20}, {"date": "2026-09-02", "count": 191}];
+const timeline = [{"date": "2026-09-01", "count": 20}, {"date": "2026-09-02", "count": 222}];
 
 new Chart(document.getElementById('winPctChart'), {
   type: 'bar',
