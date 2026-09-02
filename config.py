@@ -4,12 +4,33 @@ Edit SPORTS / API keys here. Nothing else should need editing to get started.
 """
 
 import os
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+# All "today" boundaries (dashboard, recommendations) use US Eastern time,
+# not UTC - otherwise the day flips over mid-evening for US users, hours
+# before their actual midnight. zoneinfo handles the EDT/EST switch in
+# November automatically, unlike a fixed UTC offset.
+EASTERN_TZ = ZoneInfo("America/New_York")
+
+
+def eastern_today():
+    return datetime.now(EASTERN_TZ).date().isoformat()
+
+
+def to_eastern_date(iso_utc_str):
+    if not iso_utc_str:
+        return None
+    s = iso_utc_str.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(EASTERN_TZ).date().isoformat()
 
 # ---- API keys (set as environment variables, never hardcode) ----
-ODDSPAPI_KEY = os.environ.get("ODDSPAPI_KEY", "")  # legacy, no longer used
-ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")   # free key from https://the-odds-api.com
+ODDSPAPI_KEY = os.environ.get("ODDSPAPI_KEY", "")
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 
-# ---- Sports in scope ----
 SPORTS = {
     "mlb": {
         "espn_sport": "baseball",
@@ -37,25 +58,16 @@ SPORTS = {
     },
 }
 
-# ---- Storage ----
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "edge_finder.db")
 
-# ---- Signal thresholds ----
 STEAM_MOVE_SPREAD_POINTS = 1.0
 STEAM_WINDOW_MINUTES = 90
 STEAM_MOVE_ML_CENTS = 20
 STEAM_MOVE_ML_PROB = 0.05
 MIN_SIGNAL_STRENGTH_TO_RECOMMEND = 0.6
 
-# The Odds API returns real, well-known sportsbooks (draftkings, fanduel,
-# betmgm, etc.) — no more sorting through hundreds of obscure/broken ones.
 PREFERRED_BOOK = "draftkings"
 
-# ---- Bullpen fatigue (MLB only) ----
 BULLPEN_HEAVY_INNINGS_THRESHOLD = 4.0
 
-# ---- Odds API request budgeting ----
-# The Odds API free tier: 500 credits/month. Requesting just the moneyline
-# market for one region costs 1 credit per call, and each call returns the
-# ENTIRE day's games for that sport in one shot — so this budget is generous.
 MAX_THEODDSAPI_CALLS_PER_RUN = 2
