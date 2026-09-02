@@ -3,7 +3,7 @@ Goes back through every recommendation that was logged but not yet graded,
 checks if that game has finished, and records win/loss/push. This is what
 turns "here's what we told you" into "here's how that actually did."
 
-Run this daily, after ingest_results_espn.py has pulled the day's finals —
+Run this daily, after ingest_results_espn.py has pulled the day's finals -
 it's cheap and safe to run every time (only touches ungraded rows).
 
 Usage:
@@ -43,9 +43,18 @@ def grade_total_bet(favored_side, close_point, home_score, away_score):
     return "push"
 
 
+def grade_moneyline_bet(favored_side, home_score, away_score):
+    if home_score == away_score:
+        return "push"
+    winner = "home" if home_score > away_score else "away"
+    return "win" if winner == favored_side else "loss"
+
+
 def grade_bet(signal_type, favored_side, close_point, home_score, away_score):
     if signal_type == "steam_total":
         return grade_total_bet(favored_side, close_point, home_score, away_score)
+    if signal_type in ("steam_moneyline", "bullpen_fatigue", "reverse_line_movement"):
+        return grade_moneyline_bet(favored_side, home_score, away_score)
     return grade_spread_bet(favored_side, close_point, home_score, away_score)
 
 
@@ -77,7 +86,6 @@ def grade_pending_recommendations():
 
 
 def summarize_track_record(sport_key=None):
-    """The real answer: of everything the system actually told you, how did it do."""
     conn = get_connection()
     query = "SELECT * FROM recommendations WHERE graded = 1"
     params = []
@@ -100,7 +108,7 @@ def summarize_track_record(sport_key=None):
     print(f"\nTrack record{' (' + sport_key + ')' if sport_key else ''}: "
           f"{wins}-{losses}-{pushes} ({win_pct:.1f}% win rate on {n} decided plays)")
     if n < 30:
-        print("Still a small sample — treat this as informational, not conclusive.")
+        print("Still a small sample - treat this as informational, not conclusive.")
 
 
 if __name__ == "__main__":
