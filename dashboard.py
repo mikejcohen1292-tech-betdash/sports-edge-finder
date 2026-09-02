@@ -1,6 +1,6 @@
 """
 Generates a single self-contained HTML dashboard from whatever is in the
-database right now. No server needed — open the file in a browser.
+database right now. No server needed - open the file in a browser.
 
 Usage:
     python dashboard.py
@@ -12,12 +12,13 @@ from datetime import datetime, timezone
 
 from db import get_connection, init_db
 from backtest import run_backtest
+from config import eastern_today, to_eastern_date
 
 TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Sports Edge Finder — Dashboard</title>
+<title>Sports Edge Finder - Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   body {{ font-family: -apple-system, Segoe UI, sans-serif; background: #0f1117; color: #e6e8eb; margin: 0; padding: 32px; }}
@@ -154,15 +155,14 @@ def _suggest_units(strength):
 
 
 def build_todays_plays_html(conn):
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = eastern_today()
     rows = conn.execute(
         """SELECT rec.*, g.home_team, g.away_team
            FROM recommendations rec
            JOIN games g ON g.game_id = rec.game_id
-           WHERE date(rec.recommended_at) = ?
-           ORDER BY rec.strength DESC""",
-        (today,),
+           ORDER BY rec.strength DESC"""
     ).fetchall()
+    rows = [r for r in rows if to_eastern_date(r["recommended_at"]) == today]
     if not rows:
         return ('<div class="empty">No games clear the bar today - that is a valid, correct '
                 'result on plenty of days, not a broken system.</div>')
@@ -184,11 +184,15 @@ def build_todays_plays_html(conn):
 
 
 def build_public_consensus_html(conn):
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = eastern_today()
     rows = conn.execute(
-        """SELECT pb.game_id, pb.side, pb.bet_pct, pb.handle_pct, pb.source, g.sport, g.home_team, g.away_team, g.commence_time FROM public_betting pb JOIN games g ON g.game_id = pb.game_id WHERE date(g.commence_time) = ? ORDER BY pb.captured_at DESC""",
-        (today,),
+        """SELECT pb.game_id, pb.side, pb.bet_pct, pb.handle_pct, pb.source,
+                  g.sport, g.home_team, g.away_team, g.commence_time
+           FROM public_betting pb
+           JOIN games g ON g.game_id = pb.game_id
+           ORDER BY pb.captured_at DESC"""
     ).fetchall()
+    rows = [r for r in rows if to_eastern_date(r["commence_time"]) == today]
 
     if not rows:
         return ('<div class="empty">No public betting data for today\'s games yet - '
