@@ -1,12 +1,9 @@
 """
 The morning play list. Pulls today's signals, checks them against your
 validated threshold, LOGS each qualifying game as an official recommendation
-(so it can be tracked and graded later), and prints them — including the
+(so it can be tracked and graded later), and prints them - including the
 real moneyline price and a suggested unit size, so a heavy favorite and a
 live underdog don't look like the same bet.
-
-This is meant to run once per morning, after ingest_odds_oddspapi.py has
-pulled today's lines and signals.py has scored them.
 
 Usage:
     python recommend.py
@@ -16,7 +13,7 @@ Usage:
 import argparse
 from datetime import datetime, timezone
 
-from config import SPORTS, MIN_SIGNAL_STRENGTH_TO_RECOMMEND
+from config import SPORTS, MIN_SIGNAL_STRENGTH_TO_RECOMMEND, eastern_today, to_eastern_date
 from db import get_connection, init_db
 
 
@@ -42,7 +39,7 @@ def get_todays_qualifying_signals(sport_key=None, min_strength=None):
     min_strength = min_strength if min_strength is not None else MIN_SIGNAL_STRENGTH_TO_RECOMMEND
     conn = get_connection()
 
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = eastern_today()
     query = """
         SELECT s.*, g.home_team, g.away_team, g.commence_time, g.sport as game_sport
         FROM signals s
@@ -50,25 +47,20 @@ def get_todays_qualifying_signals(sport_key=None, min_strength=None):
         LEFT JOIN results r ON r.game_id = s.game_id
         WHERE (r.completed IS NULL OR r.completed = 0)
           AND s.strength >= ?
-          AND date(g.commence_time) = ?
     """
-    params = [min_strength, today]
+    params = [min_strength]
     if sport_key:
         query += " AND g.sport = ?"
         params.append(sport_key)
     query += " ORDER BY s.strength DESC"
 
     rows = conn.execute(query, params).fetchall()
+    rows = [r for r in rows if to_eastern_date(r["commence_time"]) == today]
     conn.close()
     return rows
 
 
 def log_recommendations(rows):
-    """Writes each qualifying signal into the recommendations table, once per
-    game+signal_type. Safe to re-run the same morning — won't double-log.
-    If a recommendation already exists but is missing its price (e.g. it was
-    logged before odds data was available yet that morning), backfills the
-    price on the existing row instead of silently doing nothing."""
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
     logged = 0
@@ -102,7 +94,7 @@ def log_recommendations(rows):
 def print_recommendations(rows):
     if not rows:
         print("No games clear the bar today. That's a valid, correct output on plenty of")
-        print("days — the system isn't supposed to manufacture a play when there isn't one.")
+        print("days - the system isn't supposed to manufacture a play when there isn't one.")
         return
 
     print(f"\n{'Sport':<7}{'Matchup':<38}{'Signal':<22}{'Side':<6}{'Odds':>7}{'Units':>7}{'Strength':>9}")
@@ -115,7 +107,7 @@ def print_recommendations(rows):
               f"{odds_str:>7}{units:>6}u{r['strength']:>9.2f}")
     print()
     print("Strength is relative confidence within the signal, not a win probability.")
-    print("Units are a standard confidence-weighted sizing convention, not a proven-optimal size —")
+    print("Units are a standard confidence-weighted sizing convention, not a proven-optimal size -")
     print("treat as a starting point, and cross-check backtest.py's win% before sizing anything.")
 
 
