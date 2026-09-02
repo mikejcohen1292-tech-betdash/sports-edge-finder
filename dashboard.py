@@ -51,6 +51,12 @@ TEMPLATE = """<!DOCTYPE html>
   {todays_plays_html}
 </div>
 
+<div class="card" style="margin-bottom:20px;">
+  <h2>Top 5 Public Consensus Plays Per Sport</h2>
+  <div class="subtitle" style="margin-bottom:12px;">Real DraftKings sportsbook betting data — where the public's money is heaviest today.</div>
+  {public_consensus_html}
+</div>
+
 <div class="card" style="margin-bottom:32px;">
   <h2>Recommendation Track Record</h2>
   <div class="subtitle" style="margin-bottom:12px;">Not the full backtest below — this is specifically what the
@@ -177,74 +183,11 @@ def build_todays_plays_html(conn):
             f"track record below before sizing anything for real.</div>")
 
 
-def build_track_record_html(conn):
-    rows = conn.execute("SELECT * FROM recommendations WHERE graded = 1").fetchall()
-    if not rows:
-        return '<div class="empty">No graded recommendations yet — check back once today\'s (or past) plays have finished.</div>'
-
-    wins = sum(1 for r in rows if r["outcome"] == "win")
-    losses = sum(1 for r in rows if r["outcome"] == "loss")
-    pushes = sum(1 for r in rows if r["outcome"] == "push")
-    n = wins + losses
-    win_pct = (wins / n * 100) if n else 0.0
-    cls = "win" if win_pct >= 52.4 else "loss"
-    note = '<div class="small-sample">Small sample — treat as informational, not conclusive.</div>' if n < 30 else ""
-
-    recent = sorted(rows, key=lambda r: r["recommended_at"], reverse=True)[:10]
-    recent_trs = ""
-    for r in recent:
-        oc = r["outcome"] or "pending"
-        odds_str = _american_odds_str(r["odds_price"]) if "odds_price" in r.keys() else "—"
-        recent_trs += (f"<tr><td>{r['recommended_at'][:10]}</td><td>{r['sport']}</td>"
-                        f"<td>{r['signal_type']}</td><td>{odds_str}</td><td class='{oc}'>{oc}</td></tr>")
-
-    return (f"<div style='font-size:28px;font-weight:700;' class='{cls}'>{win_pct:.1f}% "
-            f"<span style='font-size:14px;color:#9099a8;font-weight:400;'>({wins}-{losses}-{pushes} on {n} decided plays)</span></div>"
-            f"{note}<div style='margin-top:16px;'><table><thead><tr><th>Date</th><th>Sport</th>"
-            f"<th>Signal</th><th>Odds</th><th>Result</th></tr></thead><tbody>{recent_trs}</tbody></table></div>")
-
-
-def generate():
-    conn = get_connection()
-    n_games = conn.execute("SELECT COUNT(*) c FROM games").fetchone()["c"]
-    n_signals = conn.execute("SELECT COUNT(*) c FROM signals").fetchone()["c"]
-
-    sport_counts = {}
-    for row in conn.execute("SELECT sport, COUNT(*) c FROM games GROUP BY sport"):
-        sport_counts[row["sport"]] = row["c"]
-
-    timeline = []
-    for row in conn.execute(
-        "SELECT date(computed_at) d, COUNT(*) c FROM signals GROUP BY date(computed_at) ORDER BY d"
-    ):
-        timeline.append({"date": row["d"], "count": row["c"]})
-
-    todays_plays_html = build_todays_plays_html(conn)
-    track_record_html = build_track_record_html(conn)
-
-    conn.close()
-
-    backtest_rows = run_backtest()
-
-    html = TEMPLATE.format(
-        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        n_games=n_games,
-        n_signals=n_signals,
-        todays_plays_html=todays_plays_html,
-        track_record_html=track_record_html,
-        backtest_table=build_backtest_table_html(backtest_rows),
-        backtest_json=json.dumps(backtest_rows),
-        sport_counts_json=json.dumps(sport_counts),
-        timeline_json=json.dumps(timeline),
-    )
-
-    out_path = "data/dashboard.html"
-    with open(out_path, "w") as f:
-        f.write(html)
-    print(f"Dashboard written to {out_path}")
-    return out_path
-
-
-if __name__ == "__main__":
-    init_db()
-    generate()
+def build_public_consensus_html(conn):
+    """Top 5 games per sport with the strongest public lean today, by REAL
+    DraftKings sportsbook handle% (money wagered) — confirmed real data from
+    VSiN, not a proxy. Falls back to bet% only if handle% isn't available."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = conn.execute(
+        """SELECT pb.game_id, pb.side, pb.bet_pct, pb.handle_pct, pb.source,
+                  g.sport, g.home_team,
