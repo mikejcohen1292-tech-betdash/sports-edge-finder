@@ -44,7 +44,7 @@ TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <h1>Sports Edge Finder</h1>
-<div class="subtitle">Generated {generated_at} · {n_games} games tracked · {n_signals} signals computed</div>
+<div class="subtitle">Generated {generated_at} - {n_games} games tracked - {n_signals} signals computed</div>
 
 <div class="card highlight" style="margin-bottom:20px;">
   <h2>Today's Recommended Plays</h2>
@@ -53,13 +53,13 @@ TEMPLATE = """<!DOCTYPE html>
 
 <div class="card" style="margin-bottom:20px;">
   <h2>Top 5 Public Consensus Plays Per Sport</h2>
-  <div class="subtitle" style="margin-bottom:12px;">Real DraftKings sportsbook betting data — where the public's money is heaviest today.</div>
+  <div class="subtitle" style="margin-bottom:12px;">Real DraftKings sportsbook betting data - where the public's money is heaviest today.</div>
   {public_consensus_html}
 </div>
 
 <div class="card" style="margin-bottom:32px;">
   <h2>Recommendation Track Record</h2>
-  <div class="subtitle" style="margin-bottom:12px;">Not the full backtest below — this is specifically what the
+  <div class="subtitle" style="margin-bottom:12px;">Not the full backtest below - this is specifically what the
   system actually told you to bet on past mornings, graded against what happened.</div>
   {track_record_html}
 </div>
@@ -124,7 +124,7 @@ new Chart(document.getElementById('signalTimelineChart'), {{
 
 def build_backtest_table_html(rows):
     if not rows:
-        return '<div class="empty">No graded signals yet — run the pipeline for a while first.</div>'
+        return '<div class="empty">No graded signals yet - run the pipeline for a while first.</div>'
     trs = ""
     for r in rows:
         cls = "win" if r["win_pct"] >= 52.4 else "loss"
@@ -137,7 +137,7 @@ def build_backtest_table_html(rows):
 
 def _american_odds_str(decimal_price):
     if not decimal_price:
-        return "—"
+        return "N/A"
     if decimal_price >= 2.0:
         american = (decimal_price - 1) * 100
     else:
@@ -164,30 +164,147 @@ def build_todays_plays_html(conn):
         (today,),
     ).fetchall()
     if not rows:
-        return ('<div class="empty">No games clear the bar today — that\'s a valid, correct '
+        return ('<div class="empty">No games clear the bar today - that is a valid, correct '
                 'result on plenty of days, not a broken system.</div>')
     trs = ""
     for r in rows:
         badge_cls = "badge-home" if r["favored_side"] == "home" else "badge-away"
         matchup = f"{r['away_team']} @ {r['home_team']}"
-        odds_str = _american_odds_str(r["odds_price"]) if "odds_price" in r.keys() else "—"
+        odds_str = _american_odds_str(r["odds_price"]) if "odds_price" in r.keys() else "N/A"
         units = _suggest_units(r["strength"])
         trs += (f"<tr><td>{r['sport']}</td><td>{matchup}</td><td>{r['signal_type']}</td>"
                 f"<td><span class='badge {badge_cls}'>{r['favored_side'].upper()}</span></td>"
                 f"<td>{odds_str}</td><td>{units}u</td><td>{r['strength']:.2f}</td></tr>")
     return (f"<table><thead><tr><th>Sport</th><th>Matchup</th><th>Signal</th><th>Take</th>"
             f"<th>Odds</th><th>Units</th><th>Strength</th></tr></thead><tbody>{trs}</tbody></table>"
-            f"<div class='subtitle' style='margin-top:10px;'>Odds shown are the actual moneyline price — "
+            f"<div class='subtitle' style='margin-top:10px;'>Odds shown are the actual moneyline price - "
             f"a heavy favorite and a live underdog are not the same bet even at equal strength. Units are a "
             f"standard confidence-weighted sizing convention (1-3u), not a proven-optimal size. Check the "
             f"track record below before sizing anything for real.</div>")
 
 
 def build_public_consensus_html(conn):
-    """Top 5 games per sport with the strongest public lean today, by REAL
-    DraftKings sportsbook handle% (money wagered) — confirmed real data from
-    VSiN, not a proxy. Falls back to bet% only if handle% isn't available."""
     today = datetime.now(timezone.utc).date().isoformat()
     rows = conn.execute(
-        """SELECT pb.game_id, pb.side, pb.bet_pct, pb.handle_pct, pb.source,
-                  g.sport, g.home_team,
+        """SELECT pb.game_id, pb.side, pb.bet_pct, pb.handle_pct, pb.source, g.sport, g.home_team, g.away_team, g.commence_time FROM public_betting pb JOIN games g ON g.game_id = pb.game_id WHERE date(g.commence_time) = ? ORDER BY pb.captured_at DESC""",
+        (today,),
+    ).fetchall()
+
+    if not rows:
+        return ('<div class="empty">No public betting data for today\'s games yet - '
+                'this updates once the daily pipeline runs.</div>')
+
+    latest = {}
+    for r in rows:
+        key = (r["game_id"], r["side"])
+        if key not in latest:
+            latest[key] = r
+
+    def rank_value(r):
+        return r["handle_pct"] if r["handle_pct"] is not None else r["bet_pct"]
+
+    by_game = {}
+    for (game_id, side), r in latest.items():
+        if game_id not in by_game or rank_value(r) > rank_value(by_game[game_id]):
+            by_game[game_id] = r
+
+    by_sport = {}
+    for r in by_game.values():
+        by_sport.setdefault(r["sport"], []).append(r)
+
+    html = ""
+    for sport in sorted(by_sport.keys()):
+        top5 = sorted(by_sport[sport], key=rank_value, reverse=True)[:5]
+        html += f"<h4 style='margin:14px 0 6px 0;color:#9099a8;font-size:12px;text-transform:uppercase;'>{sport}</h4>"
+        html += "<table><thead><tr><th>Matchup</th><th>Public side</th><th>Handle%</th><th>Bet%</th></tr></thead><tbody>"
+        for r in top5:
+            matchup = f"{r['away_team']} @ {r['home_team']}"
+            side_team = r["home_team"] if r["side"] == "home" else r["away_team"]
+            handle_str = f"{r['handle_pct']:.0f}%" if r["handle_pct"] is not None else "N/A"
+            bet_str = f"{r['bet_pct']:.0f}%" if r["bet_pct"] is not None else "N/A"
+            html += f"<tr><td>{matchup}</td><td>{side_team}</td><td>{handle_str}</td><td>{bet_str}</td></tr>"
+        html += "</tbody></table>"
+
+    has_real = any(r["source"] == "vsin_draftkings" for r in by_game.values())
+    if has_real:
+        html += ("<div class='subtitle' style='margin-top:10px;'>Source: VSiN - real DraftKings "
+                 "sportsbook data. Handle% = actual money wagered, Bet% = ticket count. Not a proxy.</div>")
+    else:
+        html += ("<div class='subtitle' style='margin-top:10px;'>Source: Covers.com free pick'em "
+                 "consensus - real people's picks, NOT literal sportsbook betting handle.</div>")
+    return html
+
+
+def build_track_record_html(conn):
+    rows = conn.execute("SELECT * FROM recommendations WHERE graded = 1").fetchall()
+    if not rows:
+        return '<div class="empty">No graded recommendations yet - check back once today\'s (or past) plays have finished.</div>'
+
+    wins = sum(1 for r in rows if r["outcome"] == "win")
+    losses = sum(1 for r in rows if r["outcome"] == "loss")
+    pushes = sum(1 for r in rows if r["outcome"] == "push")
+    n = wins + losses
+    win_pct = (wins / n * 100) if n else 0.0
+    cls = "win" if win_pct >= 52.4 else "loss"
+    note = '<div class="small-sample">Small sample - treat as informational, not conclusive.</div>' if n < 30 else ""
+
+    recent = sorted(rows, key=lambda r: r["recommended_at"], reverse=True)[:10]
+    recent_trs = ""
+    for r in recent:
+        oc = r["outcome"] or "pending"
+        odds_str = _american_odds_str(r["odds_price"]) if "odds_price" in r.keys() else "N/A"
+        recent_trs += (f"<tr><td>{r['recommended_at'][:10]}</td><td>{r['sport']}</td>"
+                        f"<td>{r['signal_type']}</td><td>{odds_str}</td><td class='{oc}'>{oc}</td></tr>")
+
+    return (f"<div style='font-size:28px;font-weight:700;' class='{cls}'>{win_pct:.1f}% "
+            f"<span style='font-size:14px;color:#9099a8;font-weight:400;'>({wins}-{losses}-{pushes} on {n} decided plays)</span></div>"
+            f"{note}<div style='margin-top:16px;'><table><thead><tr><th>Date</th><th>Sport</th>"
+            f"<th>Signal</th><th>Odds</th><th>Result</th></tr></thead><tbody>{recent_trs}</tbody></table></div>")
+
+
+def generate():
+    conn = get_connection()
+    n_games = conn.execute("SELECT COUNT(*) c FROM games").fetchone()["c"]
+    n_signals = conn.execute("SELECT COUNT(*) c FROM signals").fetchone()["c"]
+
+    sport_counts = {}
+    for row in conn.execute("SELECT sport, COUNT(*) c FROM games GROUP BY sport"):
+        sport_counts[row["sport"]] = row["c"]
+
+    timeline = []
+    for row in conn.execute(
+        "SELECT date(computed_at) d, COUNT(*) c FROM signals GROUP BY date(computed_at) ORDER BY d"
+    ):
+        timeline.append({"date": row["d"], "count": row["c"]})
+
+    todays_plays_html = build_todays_plays_html(conn)
+    public_consensus_html = build_public_consensus_html(conn)
+    track_record_html = build_track_record_html(conn)
+
+    conn.close()
+
+    backtest_rows = run_backtest()
+
+    html = TEMPLATE.format(
+        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        n_games=n_games,
+        n_signals=n_signals,
+        todays_plays_html=todays_plays_html,
+        public_consensus_html=public_consensus_html,
+        track_record_html=track_record_html,
+        backtest_table=build_backtest_table_html(backtest_rows),
+        backtest_json=json.dumps(backtest_rows),
+        sport_counts_json=json.dumps(sport_counts),
+        timeline_json=json.dumps(timeline),
+    )
+
+    out_path = "data/dashboard.html"
+    with open(out_path, "w") as f:
+        f.write(html)
+    print(f"Dashboard written to {out_path}")
+    return out_path
+
+
+if __name__ == "__main__":
+    init_db()
+    generate()
