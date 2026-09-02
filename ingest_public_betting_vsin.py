@@ -1,18 +1,14 @@
 """
 Pulls REAL DraftKings sportsbook public betting data from VSiN
 (data.vsin.com) - actual money wagered (Handle %) and actual ticket count
-(Bet %) on every game, not a pick'em-contest proxy. Confirmed free and
-accessible (no login, no paywall, no robots.txt block).
-
-Feeds the public_betting table with BOTH bet_pct and handle_pct populated
-for real.
+(Bet %) on every game, not a pick'em-contest proxy.
 
 Usage:
     python ingest_public_betting_vsin.py --sport mlb
 """
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from bs4 import BeautifulSoup
@@ -88,9 +84,11 @@ def _pct_to_float(s):
 
 
 def match_game(sport_key, team_a, team_b, conn):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     candidates = conn.execute(
-        "SELECT game_id, home_team, away_team FROM games WHERE sport = ?",
-        (sport_key,),
+        "SELECT game_id, home_team, away_team, commence_time FROM games "
+        "WHERE sport = ? AND commence_time >= ? ORDER BY commence_time ASC",
+        (sport_key, cutoff),
     ).fetchall()
 
     def names_match(a, b):
