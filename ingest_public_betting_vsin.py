@@ -86,8 +86,12 @@ def _pct_to_float(s):
 def match_game(sport_key, team_a, team_b, conn):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     candidates = conn.execute(
-        "SELECT game_id, home_team, away_team, commence_time FROM games "
-        "WHERE sport = ? AND commence_time >= ? ORDER BY commence_time ASC",
+        """SELECT g.game_id, g.home_team, g.away_team, g.commence_time
+           FROM games g
+           LEFT JOIN results r ON r.game_id = g.game_id
+           WHERE g.sport = ? AND g.commence_time >= ?
+             AND (r.completed IS NULL OR r.completed = 0)
+           ORDER BY g.commence_time ASC""",
         (sport_key, cutoff),
     ).fetchall()
 
