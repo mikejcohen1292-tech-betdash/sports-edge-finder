@@ -3,6 +3,11 @@ name: Daily Sports Data Pipeline
 on:
   schedule:
     - cron: '0 15 * * *'   # 11:00 AM US Eastern (EDT) - shifts to 10am ET once Daylight Saving ends in Nov
+    - cron: '0 20 * * *'   # 4:00 PM US Eastern (EDT) - a second daily snapshot, closer to evening game times,
+                            # so steam detection reflects real intraday movement instead of one full-day gap.
+                            # BUDGET NOTE: this roughly doubles monthly API usage (~240 -> ~480 credits of the
+                            # 500/month free cap) - very little margin left for manual re-runs. If you hit
+                            # quota issues, remove this second line first.
   workflow_dispatch: {}     # adds a manual "Run workflow" button too
 
 permissions:
