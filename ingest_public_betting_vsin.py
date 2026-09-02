@@ -1,0 +1,158 @@
+"""
+Pulls REAL DraftKings sportsbook public betting data from VSiN
+(data.vsin.com) — actual money wagered (Handle %) and actual ticket count
+(Bet %) on every game, not a pick'em-contest proxy. Confirmed free and
+accessible (no login, no paywall, no robots.txt block).
+
+Feeds the public_betting table with BOTH bet_pct and handle_pct populated
+for real.
+
+Usage:
+    python ingest_public_betting_vsin.py --sport mlb
+"""
+
+import argparse
+from datetime import datetime, timezone
+
+import requests
+from bs4 import BeautifulSoup
+
+from config import SPORTS
+from db import get_connection, init_db
+
+VSIN_SPORT_PARAM = {
+    "mlb": "MLB",
+    "nfl": "NFL",
+    "ncaaf": "CFB",
+}
+VSIN_DIRECT_URL = {
+    "wnba": "https://data.vsin.com/wnba/betting-splits/",
+}
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; sports-edge-finder personal research bot)"
+}
+
+
+def fetch_splits_page(sport_key):
+    if sport_key in VSIN_DIRECT_URL:
+        url = VSIN_DIRECT_URL[sport_key]
+    elif sport_key in VSIN_SPORT_PARAM:
+        url = f"https://data.vsin.com/betting-splits/?source=DK&sport={VSIN_SPORT_PARAM[sport_key]}"
+    else:
+        return None
+    resp = requests.get(url, headers=HEADERS, timeout=20)
+    resp.raise_for_status()
+    return resp.text
+
+
+def parse_splits_rows(html):
+    """Each real game is TWO consecutive team rows. A team row has exactly
+    10 cells: team, [spread, handle%, bet%], [total, handle%, bet%],
+    [moneyline, handle%, bet%]. Date-header rows have far fewer cells."""
+    soup = BeautifulSoup(html, "html.parser")
+    team_rows = []
+    for tr in soup.find_all("tr"):
+        cells = tr.find_all("td")
+        if len(cells) != 10:
+            continue
+        texts = [c.get_text(strip=True) for c in cells]
+        team_name = texts[0]
+        if not team_name:
+            continue
+        team_rows.append({
+            "team": team_name,
+            "ml_handle_pct": texts[8],
+            "ml_bet_pct": texts[9],
+        })
+
+    games = []
+    for i in range(0, len(team_rows) - 1, 2):
+        a, b = team_rows[i], team_rows[i + 1]
+        games.append((a, b))
+    return games
+
+
+def _pct_to_float(s):
+    try:
+        return float(s.replace("%", "").strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def match_game(sport_key, team_a, team_b, conn):
+    candidates = conn.execute(
+        "SELECT game_id, home_team, away_team FROM games WHERE sport = ?",
+        (sport_key,),
+    ).fetchall()
+
+    def names_match(a, b):
+        a, b = a.lower(), b.lower()
+        return a in b or b in a
+
+    for g in candidates:
+        if ((names_match(team_a, g["home_team"]) and names_match(team_b, g["away_team"])) or
+                (names_match(team_a, g["away_team"]) and names_match(team_b, g["home_team"]))):
+            home_is_a = names_match(team_a, g["home_team"])
+            return g["game_id"], home_is_a
+    return None, None
+
+
+def store_public_betting(game_id, home_bet_pct, home_handle_pct, away_bet_pct, away_handle_pct):
+    conn = get_connection()
+    captured_at = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO public_betting (game_id, captured_at, side, bet_pct, handle_pct, source)
+           VALUES (?, ?, 'home', ?, ?, 'vsin_draftkings')""",
+        (game_id, captured_at, home_bet_pct, home_handle_pct),
+    )
+    conn.execute(
+        """INSERT INTO public_betting (game_id, captured_at, side, bet_pct, handle_pct, source)
+           VALUES (?, ?, 'away', ?, ?, 'vsin_draftkings')""",
+        (game_id, captured_at, away_bet_pct, away_handle_pct),
+    )
+    conn.commit()
+    conn.close()
+
+
+def run(sport_key):
+    html = fetch_splits_page(sport_key)
+    if html is None:
+        print(f"No VSiN splits page configured for {sport_key}, skipping.")
+        return
+
+    games = parse_splits_rows(html)
+    conn = get_connection()
+
+    matched = 0
+    for team_a, team_b in games:
+        game_id, home_is_a = match_game(sport_key, team_a["team"], team_b["team"], conn)
+        if game_id is None:
+            continue
+
+        a_bet, a_handle = _pct_to_float(team_a["ml_bet_pct"]), _pct_to_float(team_a["ml_handle_pct"])
+        b_bet, b_handle = _pct_to_float(team_b["ml_bet_pct"]), _pct_to_float(team_b["ml_handle_pct"])
+        if a_bet is None or b_bet is None:
+            continue
+
+        home_bet, home_handle = (a_bet, a_handle) if home_is_a else (b_bet, b_handle)
+        away_bet, away_handle = (b_bet, b_handle) if home_is_a else (a_bet, a_handle)
+        store_public_betting(game_id, home_bet, home_handle, away_bet, away_handle)
+        matched += 1
+
+    conn.close()
+    print(f"{sport_key}: {len(games)} games parsed, {matched} matched to known games "
+          f"(real DraftKings handle%/bet%, not a proxy).")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sport", required=True, choices=SPORTS.keys())
+    args = parser.parse_args()
+
+    init_db()
+    run(args.sport)
+
+
+if __name__ == "__main__":
+    main()
