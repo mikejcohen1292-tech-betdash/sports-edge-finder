@@ -2,7 +2,7 @@ name: Daily Sports Data Pipeline
 
 on:
   schedule:
-    - cron: '0 13 * * *'   # 9:00 AM US Eastern, every day
+    - cron: '0 15 * * *'   # 11:00 AM US Eastern (EDT) - shifts to 10am ET once Daylight Saving ends in Nov
   workflow_dispatch: {}     # adds a manual "Run workflow" button too
 
 permissions:
