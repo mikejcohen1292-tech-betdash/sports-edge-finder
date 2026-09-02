@@ -48,8 +48,18 @@ def fetch_splits_page(sport_key):
 
 def parse_splits_rows(html):
     soup = BeautifulSoup(html, "html.parser")
+    all_trs = soup.find_all("tr")
+    cell_counts = {}
+    for tr in all_trs:
+        n = len(tr.find_all("td"))
+        cell_counts[n] = cell_counts.get(n, 0) + 1
+    print(f"  [debug] {len(all_trs)} <tr> rows found, cell-count distribution: {cell_counts}")
+    if len(html) < 2000:
+        print(f"  [debug] response looks suspiciously short ({len(html)} chars) - "
+              f"possible block page. First 300 chars: {html[:300]}")
+
     team_rows = []
-    for tr in soup.find_all("tr"):
+    for tr in all_trs:
         cells = tr.find_all("td")
         if len(cells) != 11:
             continue
