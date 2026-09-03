@@ -65,6 +65,8 @@ def parse_splits_rows(html):
             continue
         team_rows.append({
             "team": team_name,
+            "spread_handle_pct": texts[3],
+            "spread_bet_pct": texts[4],
             "ml_handle_pct": texts[9],
             "ml_bet_pct": texts[10],
         })
@@ -133,6 +135,13 @@ def run(sport_key):
     games = parse_splits_rows(html)
     conn = get_connection()
 
+    # MLB's spread (run line) is almost always fixed at +/-1.5 — the point
+    # doesn't carry the same "who covers" meaning it does in NFL/NCAAF/WNBA,
+    # so moneyline is the more meaningful public split for MLB specifically.
+    # Every other sport uses the spread split instead.
+    bet_key, handle_key = ("ml_bet_pct", "ml_handle_pct") if sport_key == "mlb" \
+        else ("spread_bet_pct", "spread_handle_pct")
+
     matched = 0
     skipped_bad_pair = 0
     for team_a, team_b in games:
@@ -144,8 +153,8 @@ def run(sport_key):
         if game_id is None:
             continue
 
-        a_bet, a_handle = _pct_to_float(team_a["ml_bet_pct"]), _pct_to_float(team_a["ml_handle_pct"])
-        b_bet, b_handle = _pct_to_float(team_b["ml_bet_pct"]), _pct_to_float(team_b["ml_handle_pct"])
+        a_bet, a_handle = _pct_to_float(team_a[bet_key]), _pct_to_float(team_a[handle_key])
+        b_bet, b_handle = _pct_to_float(team_b[bet_key]), _pct_to_float(team_b[handle_key])
         if a_bet is None or b_bet is None:
             continue
 
