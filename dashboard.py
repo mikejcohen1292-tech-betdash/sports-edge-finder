@@ -54,7 +54,7 @@ TEMPLATE = """<!DOCTYPE html>
 
 <div class="card" style="margin-bottom:20px;">
   <h2>Top 5 Public Consensus Plays Per Sport</h2>
-  <div class="subtitle" style="margin-bottom:12px;">Real DraftKings sportsbook betting data - where the public's money is heaviest today.</div>
+  <div class="subtitle" style="margin-bottom:12px;">Real DraftKings sportsbook betting data - spread for NFL/NCAAF/WNBA, moneyline for MLB (where the run line rarely moves).</div>
   {public_consensus_html}
 </div>
 
