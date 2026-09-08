@@ -65,6 +65,10 @@ jobs:
           python ingest_public_betting_vsin.py --sport nfl
           python ingest_public_betting_vsin.py --sport ncaaf
 
+      - name: Reconcile any orphaned games before computing signals
+        continue-on-error: true
+        run: python fix_orphan_games.py
+
       - name: Compute signals
         continue-on-error: true
         run: python signals.py
